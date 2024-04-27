@@ -23,9 +23,9 @@ typedef NS_ENUM(uint32_t, ProductID) {
     kPID_S61MK2 = 0x1620,
     kPID_S88MK2 = 0x1630,
     // MK3 controllers.
-    kPID_S49MK3 = 0x2100, // FIXME: NO IDEA - THESE ARE PLACEHOLDERS SO FAR
+    kPID_S49MK3 = 0x2100, // FIXME: NO IDEA - THIS IS A PLACEHOLDER SO FAR
     kPID_S61MK3 = 0x2110, // Confirmed, thanks to @Bounga.
-    kPID_S88MK3 = 0x2120  // FIXME: NO IDEA - THESE ARE PLACEHOLDERS SO FAR
+    kPID_S88MK3 = 0x2120, // Confirmed, thanks to @ninanoe.
 };
 
 @class LogViewController;
