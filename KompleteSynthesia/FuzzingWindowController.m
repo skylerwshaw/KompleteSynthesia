@@ -56,6 +56,9 @@ static const NSTimeInterval kFuzzTimerDelay = 0.05;
 
     [_delegate preferencesUpdatedKeyState:0x00 forKeyIndex:0];
 
+    _delaySlider.target = self;
+    _delaySlider.action = @selector(delayChanged:);
+
     commandUpdateTimer = [NSTimer
         scheduledTimerWithTimeInterval:kCommandUpdateTimerDelay
                                repeats:YES
@@ -79,17 +82,28 @@ static const NSTimeInterval kFuzzTimerDelay = 0.05;
                        withLength:_hidController.initialCommandLength];
 }
 
+- (void)delayChanged:(NSSlider*)sender
+{
+    [self pause:sender];
+    [self pause:sender];
+}
+
 - (void)updateButtonStates
 {
     if (paused) {
         _startButton.enabled = NO;
         _pauseButton.enabled = YES;
+        _pauseButton.state = NSControlStateValueMixed;
+        [_pauseButton setButtonType:NSButtonTypePushOnPushOff];
         _stopButton.enabled = YES;
     } else {
         _startButton.enabled = fuzzTimer == nil;
         _stopButton.enabled = fuzzTimer != nil;
         _pauseButton.enabled = fuzzTimer != nil;
+        _pauseButton.state = fuzzTimer != nil ? NSControlStateValueOn : NSControlStateValueOff;
+        [_pauseButton setButtonType:NSButtonTypeMomentaryPushIn];
     }
+    //    [_pauseButton highlight:_pauseButton.state == NSControlStateValueMixed];
 }
 
 - (void)stopTimer
@@ -112,10 +126,11 @@ static const NSTimeInterval kFuzzTimerDelay = 0.05;
     if (fuzzTimer != nil) {
         paused = YES;
         [self stopTimer];
-    } else {
+    } else if (paused == YES) {
         paused = NO;
         [self startTimer];
     }
+    [self updateButtonStates];
 }
 
 - (void)startTimer
