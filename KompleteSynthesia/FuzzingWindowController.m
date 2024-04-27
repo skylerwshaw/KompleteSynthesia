@@ -132,8 +132,9 @@ static const NSTimeInterval kFuzzTimerDelay = 0.05;
                                    if (self->_hidController.lightGuideUpdateMessage[0] == 0xFF) {
                                        self->_hidController.lightGuideUpdateMessage[1] += 0x0C;
                                    }
-                                   [_delegate preferencesUpdatedKeyState:self->_hidController.lightGuideUpdateMessage[1]
-                                                             forKeyIndex:0];
+                                   [self->_delegate
+                                       preferencesUpdatedKeyState:self->_hidController.lightGuideUpdateMessage[1]
+                                                      forKeyIndex:0];
                                    self->_hidController.lightGuideUpdateMessage[0]++;
                                  }];
 }
