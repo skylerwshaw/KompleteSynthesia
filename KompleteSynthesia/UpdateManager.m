@@ -18,7 +18,7 @@ NSString* kProject = @"KompleteSynthesia";
 
 @implementation UpdateManager
 
-+ (NSString*)LatestReleaseTag:(NSArray*)releases forPreReleases:(BOOL)pre
++ (NSString*)latestReleaseTag:(NSArray*)releases forPreReleases:(BOOL)pre
 {
     // GitHub returns the tags in chronological order. That means we can pass through
     // the returned tags and find the first one that is not a pre-release to find the
@@ -37,7 +37,7 @@ NSString* kProject = @"KompleteSynthesia";
     return nil;
 }
 
-+ (void)UpdateCheckWithCompletion:(void (^)(NSString* status))completion
++ (void)updateCheckWithCompletion:(void (^)(NSString* status))completion
 {
     NSString* repo = [NSString stringWithFormat:@"https://api.github.com/repos/%@/%@/tags", kOwner, kProject];
 
@@ -63,7 +63,7 @@ NSString* kProject = @"KompleteSynthesia";
                              // If we were running a pre-release, we would be interested in
                              // pre-release updates.
                              BOOL runningPreRelease = dots != 1;
-                             tag = [UpdateManager LatestReleaseTag:results forPreReleases:runningPreRelease];
+                             tag = [UpdateManager latestReleaseTag:results forPreReleases:runningPreRelease];
                              if ([tag compare:versionTag] != NSOrderedSame) {
                                  NSLog(@"there is a different version available");
                                  status = @"update available";
@@ -105,7 +105,7 @@ NSString* kProject = @"KompleteSynthesia";
     [dataTask resume];
 }
 
-+ (BOOL)CheckForUpdates
++ (BOOL)checkForUpdates
 {
     NSUserDefaults* userDefaults = [NSUserDefaults standardUserDefaults];
     return [userDefaults boolForKey:kAppDefaultCheckForUpdate];

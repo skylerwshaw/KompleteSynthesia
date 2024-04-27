@@ -249,7 +249,7 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     [userDefaults registerDefaults:@{kAppDefaultCheckForUpdate : @(YES)}];
     BOOL checkForUpdate = [userDefaults boolForKey:kAppDefaultCheckForUpdate];
     if (checkForUpdate) {
-        [UpdateManager UpdateCheckWithCompletion:^(NSString* state) {
+        [UpdateManager updateCheckWithCompletion:^(NSString* state) {
           NSString* message = [NSString stringWithFormat:@"update check: %@", state];
           [self.log logLine:message];
         }];
