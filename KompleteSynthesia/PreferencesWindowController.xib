@@ -284,7 +284,6 @@ That file belongs to Synthesia and should be located in the folder ~/Library/App
                                                                 </attributes>
                                                             </fragment>
                                                         </attributedString>
-                                                        <color key="insertionPointColor" name="textInsertionPointColor" catalog="System" colorSpace="catalog"/>
                                                     </textView>
                                                 </subviews>
                                             </clipView>

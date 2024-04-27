@@ -44,7 +44,7 @@
     self.mirrorSynthesiaToControllerScreen.enabled = _video != nil;
     [self.mirrorSynthesiaToControllerScreen
         setState:_video.mirrorSynthesiaApplicationWindow ? NSControlStateValueOn : NSControlStateValueOff];
-    [self.checkForUpdates setState:[UpdateManager CheckForUpdates] ? NSControlStateValueOn : NSControlStateValueOff];
+    [self.checkForUpdates setState:[UpdateManager checkForUpdates] ? NSControlStateValueOn : NSControlStateValueOff];
 }
 
 - (IBAction)selectKeyState:(id)sender
@@ -75,18 +75,6 @@
     popOver.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     popOver.behavior = NSPopoverBehaviorTransient;
     [popOver showRelativeToRect:colorField.frame ofView:[self.window contentView] preferredEdge:NSMaxXEdge];
-}
-
-- (void)keyStatePicked:(const unsigned char)keyState index:(const unsigned char)index
-{
-    NSLog(@"picked key state %02Xh for map index %d", keyState, index);
-
-    assert(controls.count > index);
-    ColorField* colorField = controls[index];
-    colorField.keyState = keyState;
-    [colorField setNeedsDisplay:YES];
-
-    [self.delegate preferencesUpdatedKeyState:keyState forKeyIndex:index];
 }
 
 - (IBAction)fowardingValueChanged:(id)sender
@@ -131,10 +119,24 @@
 - (IBAction)checkForUpdate:(id)sender
 {
     [self.progress startAnimation:self];
-    [UpdateManager UpdateCheckWithCompletion:^(NSString* status) {
+    [UpdateManager updateCheckWithCompletion:^(NSString* status) {
       [self.progress stopAnimation:self];
       [self.updateStatusField setStringValue:status];
     }];
+}
+
+#pragma mark - PaletteViewControllerDelegate
+
+- (void)keyStatePicked:(const unsigned char)keyState index:(const unsigned char)index
+{
+    NSLog(@"picked key state %02Xh for map index %d", keyState, index);
+
+    assert(controls.count > index);
+    ColorField* colorField = controls[index];
+    colorField.keyState = keyState;
+    [colorField setNeedsDisplay:YES];
+
+    [self.delegate preferencesUpdatedKeyState:keyState forKeyIndex:index];
 }
 
 @end

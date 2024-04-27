@@ -259,7 +259,7 @@ const unsigned char kKeyStateMaskMusic = 0x20;
     [hid lightKey:key color:[self lightColorWithState:keyStates[key]]];
 }
 
-#pragma mark MIDIControllerDelegate
+#pragma mark - MIDIControllerDelegate
 
 - (void)receivedMIDIEvent:(unsigned char)cv
                   channel:(unsigned char)channel
@@ -301,7 +301,7 @@ const unsigned char kKeyStateMaskMusic = 0x20;
     });
 }
 
-#pragma mark HIDControllerDelegate
+#pragma mark - HIDControllerDelegate
 
 - (void)deviceRemoved
 {
@@ -404,17 +404,15 @@ const unsigned char kKeyStateMaskMusic = 0x20;
             break;
         case kKompleteKontrolButtonIdKnob1:
             if (value > 0) {
-                [log logLine:@"KNOB1 -> sending volume up"];
+                [log logLine:@"KNOB1 -> sending VOLUME UP"];
                 [VirtualEvent triggerAuxKeyEvents:0];
             } else if (value < 0) {
-                [log logLine:@"KNOB1 -> sending volume down"];
+                [log logLine:@"KNOB1 -> sending VOLUME DOWN"];
                 [VirtualEvent triggerAuxKeyEvents:1];
             }
             [_delegate updateVolume:self];
             break;
     }
 }
-
-#pragma mark HIDControllerDelegate
 
 @end
