@@ -120,7 +120,7 @@ enum {
 @class USBController;
 
 @protocol HIDControllerDelegate <NSObject>
-- (void)receivedEvent:(const int)event value:(int)value;
+- (void)receivedHIDEvent:(const int)event value:(int)value;
 - (void)deviceRemoved;
 @end
 

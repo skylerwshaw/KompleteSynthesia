@@ -329,7 +329,7 @@ static void setMk1ColorWithMk2ColorCode(unsigned char mk2ColorCode, unsigned cha
         const short int* newValue = (short int*)&report[10];
         if (lastVolumeKnobValue != INTMAX_C(16)) {
             int delta = *newValue - lastVolumeKnobValue;
-            [_delegate receivedEvent:kKompleteKontrolButtonIdKnob1 value:delta];
+            [_delegate receivedHIDEvent:kKompleteKontrolButtonIdKnob1 value:delta];
         }
         lastVolumeKnobValue = *newValue;
         return;
@@ -343,7 +343,7 @@ static void setMk1ColorWithMk2ColorCode(unsigned char mk2ColorCode, unsigned cha
                 [self feedbackWithEvent:keyEvents[i].identifier];
             }
 
-            [_delegate receivedEvent:keyEvents[i].identifier value:0];
+            [_delegate receivedHIDEvent:keyEvents[i].identifier value:0];
 
             return;
         }
@@ -357,7 +357,7 @@ static void setMk1ColorWithMk2ColorCode(unsigned char mk2ColorCode, unsigned cha
         delta = 1;
     }
     if (delta != 0) {
-        [_delegate receivedEvent:kKompleteKontrolButtonIdJogScroll value:delta];
+        [_delegate receivedHIDEvent:kKompleteKontrolButtonIdJogScroll value:delta];
     }
     lastJogWheelValue = report[30];
 

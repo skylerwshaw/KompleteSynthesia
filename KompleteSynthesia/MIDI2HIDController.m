@@ -315,7 +315,7 @@ const unsigned char kKeyStateMaskMusic = 0x20;
     }
 }
 
-- (void)receivedEvent:(const int)event value:(int)value
+- (void)receivedHIDEvent:(const int)event value:(int)value
 {
     // These buttons shall work in all cases as it they do not intended to control Synthesia
     // but KompleteSynthesia.
