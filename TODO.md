@@ -5,25 +5,44 @@ overall, see [MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) first.
 
 ## MK3 control surface: unresponsive after first real key-light write (blocked on macOS driver access, see DRIVERKIT_INVESTIGATION.md)
 
-The S88 MK3's control surface (buttons/jogwheel/knobs, delivered over the `"DAW"` MIDI
-port after the NIHIA handshake in `MIDIController.m`) periodically goes fully
-unresponsive during a session. Separately, keybed note velocity has also been observed
-stuck at 127. Both symptoms only recovered after a physical USB unplug/replug of the
-keyboard, suggesting the same underlying NIHIA session dying rather than two unrelated
-bugs.
+The S88 MK3's control surface (buttons/jogwheel/knobs, over the `"DAW"` MIDI port
+after the NIHIA handshake in `MIDIController.m`) goes fully unresponsive the first
+time a real (non-zero) key gets lit, confirmed reliable, solo, with no Synthesia
+song loaded. Only a physical USB unplug/replug recovers. Note velocity has also been
+observed stuck at 127 (not re-confirmed against this specific trigger).
 
-Suspect this needs a periodic keepalive we're not currently sending. Real Komplete
-Kontrol software sends a ~10-byte packet to the device every ~8 seconds:
+**Root cause**: entering the MK3's HID legacy LED mode (`kKompleteKontrolInit`, `A0 00
+00`, used to wrap every lightguide write in `HIDController.m`) kills the DAW-port
+NIHIA session below the MIDI layer, confirmed via MIDI Monitor (an independent tool
+bypassing this app entirely): a button press in the broken state produces nothing at
+the OS level, not just nothing in this app's logs. Two MIDI-layer recovery attempts
+(resending the NIHIA handshake after every write; also resending the mystery
+`06 00 00 00 93 02 cd 01 2c 90` HID packet real Komplete Kontrol sends) were both
+tried and confirmed insufficient on real hardware, then removed: a break below the
+MIDI layer can't be fixed by anything sent over MIDI. A genuine, unrelated data race
+between concurrent lightguide writers (physical key presses vs. Synthesia's
+light-loopback port, both hitting `updateLightGuideMap:` unsynchronized) was found and
+fixed regardless (`@synchronized(self)` in `HIDController.m`), real bug, kept, but
+not the cause of this symptom (doesn't reproduce solo).
 
-```
-06 00 00 00 93 02 cd 01 2c 90
-```
+**The real fix**: the S88 MK3 has an actual full-featured "PLUG-IN mode", confirmed by
+a third-party reverse-engineering project
+([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux),
+Wireshark captures of real Komplete Kontrol), activated via a MessagePack-encoded
+handshake over raw USB bulk transfer, not the HID scheme this app and GitHub
+discussion #29 have used. `KompleteSynthesia/MK3Protocol.h`/`.m` implement that
+handshake (verified byte-for-byte against the Python reference). Attempting it from
+this app failed: macOS returns `kIOReturnExclusiveAccess` when claiming the needed USB
+interface: something else (almost certainly the OS's own built-in USB Audio/MIDI
+class driver) already owns it, and a normal sandboxed app has no way to evict that the
+way Linux's `detachKernelDriver()` does. Getting real USB access likely requires a
+DriverKit system extension. **Full details, sources, and a scoped first step are in
+`DRIVERKIT_INVESTIGATION.md`**, read that before attempting this again.
 
-This was previously assumed (in earlier, pre-handshake-discovery attempts, see git
-history and GitHub discussion #29) to be unnecessary MK3 init noise and discarded.
-Investigate whether replicating it on a timer, once the handshake in
-`MIDIController.m` completes, keeps the NIHIA session alive instead of degrading over
-time.
+Also found and fixed in passing: `USBController.m`'s `kUSBDeviceInterfaceMK3` was
+`0x04` (should be `0x03` per the reference project, endpoint `0x04` was already
+correct); never caught before because `VideoController`, the only prior caller of
+`bulkWriteData:`, is `mk == 2`-only, so this path had never run on real MK3 hardware.
 
 ## MK3: default button/strip/ring lighting goes out permanently on first key press
 

@@ -24,7 +24,13 @@ const uint32_t kVendorID_NativeInstruments = 0x17CC;
 const uint32_t kUSBDeviceInterfaceMK2 = 0x03;
 const uint32_t kUSBDeviceInterfaceEndpointMK2 = 0x03;
 
-const uint32_t kUSBDeviceInterfaceMK3 = 0x04;
+// Confirmed via the kontrol-s88-mk3-linux reverse-engineering project
+// (https://github.com/HugginsIndustries/kontrol-s88-mk3-linux/blob/main/docs/REVERSE_ENGINEERING.md):
+// "Interface 3, Endpoint 4 OUT (0x04) is where all Komplete Kontrol communication
+// happens." This interface number was never actually exercised on real MK3 hardware
+// before (VideoController, the only caller of bulkWriteData:, is only instantiated for
+// mk == 2), so it was untested and wrong.
+const uint32_t kUSBDeviceInterfaceMK3 = 0x03;
 const uint32_t kUSBDeviceInterfaceEndpointMK3 = 0x04;
 
 @implementation USBController {
@@ -200,7 +206,8 @@ const uint32_t kUSBDeviceInterfaceEndpointMK3 = 0x04;
 
     ret = (*interface)->USBInterfaceOpen(interface);
     if (ret != kIOReturnSuccess) {
-        NSLog(@"USBInterfaceOpen failed");
+        NSLog(@"USBInterfaceOpen failed on interface %d: 0x%08x (%@)", number, ret,
+              [USBController descriptionWithIOReturn:ret]);
         return ret;
     }
 

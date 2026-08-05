@@ -502,6 +502,8 @@ static void HIDInputCallback(void* context,
                                            (__bridge void*)self);
 
     if (_mk == 3) {
+        // The legacy HID `A0 00 00` LED-mode scheme below is fundamentally incompatible
+        // with keeping button/knob reporting alive (see TODO.md for the full history).
         return [self warmUpMK3WithError:error];
     }
 
@@ -594,21 +596,35 @@ static void HIDInputCallback(void* context,
 
 - (BOOL)updateLightGuideMap:(NSError**)error
 {
-    if (_mk == 3) {
-        // See kKompleteKontrolExitLightGuideModeMK3 above: every lightguide write must
-        // be wrapped in an enter/exit of the MK3's LED mode or the device stops emitting
-        // MIDI.
-        if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
-            return NO;
+    // lightKey:/lightKeysWithColor: are called from at least two unsynchronized CoreMIDI
+    // callback threads (the physical keybed's "Main" port and Synthesia's light-loopback
+    // port), plus the swoosh animation queue. For MK3 that write is a 3-report enter/
+    // payload/exit sequence; if two callers interleave those reports (e.g. both enter
+    // before either exits), the device is left stuck in LED mode, silencing all further
+    // HID/MIDI reporting until a physical replug. Serialize the whole sequence so it can
+    // never be interrupted by a concurrent caller.
+    @synchronized(self) {
+        if (_mk == 3) {
+            // See kKompleteKontrolExitLightGuideModeMK3 above, every lightguide write
+            // must be wrapped in an enter/exit of the MK3's LED mode or the device stops
+            // emitting MIDI. Per GitHub discussion #29 (ca9), entering that mode disrupts
+            // the whole class-compliant MIDI interface, not just note events: it kills
+            // the DAW-port NIHIA session used for button/knob reporting, and nothing
+            // tried so far (resending the MIDI handshake, an HID-level recovery packet)
+            // restores it. MIDI Monitor confirms the break is below the MIDI layer
+            // entirely. See TODO.md for the real fix in progress.
+            if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
+                return NO;
+            }
+            if ([self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error] == NO) {
+                return NO;
+            }
+            return [self setReport:kKompleteKontrolExitLightGuideModeMK3
+                             length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
+                              error:error];
         }
-        if ([self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error] == NO) {
-            return NO;
-        }
-        return [self setReport:kKompleteKontrolExitLightGuideModeMK3
-                         length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
-                          error:error];
+        return [self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error];
     }
-    return [self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error];
 }
 
 - (void)lightKey:(int)key color:(unsigned char)color

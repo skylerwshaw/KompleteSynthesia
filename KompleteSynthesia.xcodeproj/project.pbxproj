@@ -300,6 +300,7 @@
 			files = (
 				BB229913299040C500CFFB7C /* ApplicationObserver.m in Sources */,
 				BBB5EFAF29738E6F00C1BAC3 /* USBController.m in Sources */,
+				C592CD6AFE6CE397E0B61771 /* MK3Protocol.m in Sources */,
 				BB8570FA2971935B0004218B /* SynthesiaController.m in Sources */,
 				BB7AB63E298042530081B05E /* ColorField.m in Sources */,
 				BB8A5B9C298C45BB0076066D /* VideoController.m in Sources */,

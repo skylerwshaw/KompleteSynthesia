@@ -346,6 +346,12 @@ static const double kMIDIControlSurfaceTenNsPerMinute = 6.0e9;
                 NSLog(@"found control surface output, sending NIHIA handshake");
                 [self sendControlSurfaceCC:kMIDIControlSurfaceHandshakeCC value:kMIDIControlSurfaceProtocolVersion];
                 sentControlSurfaceHandshake = YES;
+                // The control surface going silent (and separately, note velocity
+                // sticking at 127) until a physical replug is caused by entering the
+                // MK3's HID legacy LED mode for lightguide writes (HIDController.m):
+                // it kills this DAW-port NIHIA session below the MIDI layer, confirmed
+                // via MIDI Monitor to be unrecoverable by resending this handshake. See
+                // TODO.md for the real fix in progress.
                 break;
             }
         }
