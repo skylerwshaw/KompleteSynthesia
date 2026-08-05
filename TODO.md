@@ -151,7 +151,48 @@ hardware, and `AppDelegate.m` hard-gates `VideoController` instantiation to
 `mk == 2` only, so MK3 never reaches it today. No community prior art exists for
 this at all, would be a from-scratch effort.
 
-## kPID_S49MK3 missing from the HID-level PID table
+## Wanted: an S49 MK3 owner, and anyone with an S61 MK3
 
-Pre-existing gap (`HIDController.m`), unrelated to the MK3 lighting/input work,
-unverifiable without S49 hardware.
+Everything MK3 here has been developed and verified against exactly one keyboard, an S88
+MK3. Two gaps need hardware nobody working on this has:
+
+- **S49 MK3 is unsupported.** Its product ID is a guess (`kPID_S49MK3 = 0x2100` in
+  `USBController.h`) and it is missing from `HIDController.m`'s device table entirely, so
+  the app will not recognise one whatever the lighting path. One confirmed product ID
+  unblocks it.
+- **S61 MK3 is untested.** Its product ID is confirmed (thanks to @Bounga) and it is in the
+  table, so it *should* work (the ODR lighting path differs only by the starting note),
+  but nobody has run it.
+
+Neither is a code problem waiting on a decision; both are waiting on one report from
+someone with the hardware.
+
+### The test protocol, in full
+
+```
+./scripts/odr_lightguide.py
+```
+
+That is all of it. Roughly 20 seconds, needs `pip install msgpack`, and needs Native
+Instruments' hardware connection service running, which it is by default, quit Komplete
+Kontrol first so it is not holding focus. The script works on keyboards this app cannot yet
+recognise, because it asks the service what is attached instead of consulting our own
+product-ID table, and it addresses all 128 MIDI notes so it assumes no particular key
+count. It only lights keys; nothing is written to the device and nothing is left changed.
+
+Three things to report back:
+
+1. The device line it prints, **product ID especially**, that is the missing datum.
+2. Whether phase 1 lit every key on the keyboard.
+3. The lowest and highest key lit in phase 2, by name, e.g. `C2` and `C6`.
+
+What each answer buys: (1) goes straight into `ProductID` in `USBController.h` and the
+device table in `HIDController.m`. (3) gives the `offset` for that table entry: it is the
+negated MIDI note of the lowest key, so a lowest lit `C2` means `-36`. A 49-key is expected
+to run C2..C6 and a 61-key C2..C7, so (3) mostly confirms the guess. If (2) shows keys that
+never light, the LED array is not a plain MIDI-note map on that model and
+[ODR_PROTOCOL.md](ODR_PROTOCOL.md) needs revisiting.
+
+With those three answers the table entry is a two-line change, no hardware needed at this
+end. Note that this covers lighting only: the NIHIA control-surface handshake would still
+be unverified on those models.

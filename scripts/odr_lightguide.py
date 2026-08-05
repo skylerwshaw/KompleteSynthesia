@@ -5,7 +5,11 @@ This is the reference implementation and the runnable check for the ODR IPC prot
 documented in ODR_PROTOCOL.md. It lights the keyboard without touching the legacy HID
 LED mode, so the control surface keeps working, which is the whole point.
 
-    ./scripts/odr_lightguide.py            # C major scale, then dark
+It doubles as the whole test protocol for a keyboard this project has not seen, because it
+asks the service what is attached rather than consulting our own product-ID table, so it
+runs on models the app itself cannot yet recognise. See TODO.md.
+
+    ./scripts/odr_lightguide.py            # identify the keyboard, then light it
     ./scripts/odr_lightguide.py --selftest # encode-only, no hardware needed
 
 Requires msgpack (pip install msgpack) and NIHardwareConnectionService running.
@@ -100,8 +104,11 @@ class ODRClient:
         devices = reply[3].get("available_devices") or []
         if not devices:
             raise RuntimeError("service reports no connected devices")
+        print(f"agent {reply[3].get('agent_version', '?')}")
+        for d in devices:
+            print(f"  {d.get('product')}  serial {d.get('serialnumber')}  "
+                  f"vendor {d.get('vendorID', 0):#06x}  product {d.get('productID', 0):#06x}")
         serial = devices[0]["serialnumber"]
-        print(f"{devices[0]['product']} ({serial}) via agent {reply[3].get('agent_version', '?')}")
         self.request(METHOD_CONNECT_DEVICE, [self.uuid, serial])
         # Lighting is ignored unless the client has asked for focus first.
         self.notify(METHOD_REQUEST_FOCUS, [self.uuid, serial])
@@ -151,17 +158,23 @@ def main():
     client = ODRClient()
     client.connect_device()
 
-    print("C major scale, one note at a time")
-    for note in [60, 62, 64, 65, 67, 69, 71, 72]:
-        client.set_leds(lambda n, note=note: GREEN if n == note else OFF)
-        time.sleep(0.25)
+    # Every phase addresses all 128 MIDI notes, so this makes no assumption about which
+    # keyboard is attached, the device simply lights whichever of them it has.
+    print("\n1. whole keyboard blue for 5s, every key should light")
+    client.set_leds(lambda n: BLUE)
+    time.sleep(5)
 
-    print("whole keyboard blue")
-    client.set_leds(lambda n: BLUE if 21 <= n <= 108 else OFF)
-    time.sleep(2)
+    print("2. C notes only, red, for 10s, note the lowest and highest key that lights")
+    client.set_leds(lambda n: RED if n % 12 == 0 else OFF)
+    time.sleep(10)
 
-    print("dark")
+    print("3. dark")
     client.set_leds(lambda n: OFF)
+
+    print("\nTo report a keyboard this project has not seen, send back:")
+    print("  - the device line printed above, product ID especially")
+    print("  - whether phase 1 lit every key")
+    print("  - the lowest and highest key lit in phase 2, by name (e.g. C2 and C6)")
     return 0
 
 

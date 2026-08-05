@@ -84,10 +84,11 @@ holding the interface, and is fixed, see `TODO.md`.
 
 ## Where to go next
 
-- **`TODO.md`**: the full list of open MK3 items (this conflict, plus six smaller,
-  independent gaps: default lighting loss, unmapped buttons, Shift+Play/Record,
-  dead knob/button IDs, screen mirroring, a missing product ID). Read the top section
-  for the complete root-cause investigation trail behind this doc's summary.
+- **`TODO.md`**: the full list of open MK3 items (default lighting loss, unmapped
+  buttons, Shift+Play/Record, dead knob/button IDs, screen mirroring), plus the one item
+  that needs hardware rather than work: **all of this was built against a single S88 MK3**,
+  so an S49 owner is wanted and an S61 is unverified. That section carries the whole test
+  protocol, which is one command.
 - **`ODR_PROTOCOL.md`**: the service's socket protocol, how lighting actually works now,
   and the two silent-failure traps that make it look unreachable. `scripts/odr_lightguide.py`
   is a standalone reference client.
