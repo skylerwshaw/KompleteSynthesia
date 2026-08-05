@@ -26,13 +26,14 @@ Chose your favorite lightguide colors or work with the defaults.
 
 ![Lightguide Setup](site/images/Setup_Dialog.png)
 
-## MK3 support (in progress)
+## MK3 support
 
-Native Instruments Komplete Kontrol S-series **MK3** keyboards are only partially
-supported today, play and light guide work, but the control surface (buttons,
-jogwheel, knobs) stops responding after the first lit key. See
-[MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) for the mission, current status, and
-why fixing it requires ongoing work beyond app code.
+Native Instruments Komplete Kontrol S-series **MK3** keyboards are supported: play, light
+guide, and the control surface (buttons, jogwheel, knobs) all work together, verified on an
+S88. Lighting is done via Native Instruments' own hardware connection service rather than
+the older HID scheme MK1/MK2 use, see [ODR_PROTOCOL.md](ODR_PROTOCOL.md) for how, and
+[MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) for status and remaining gaps (default
+button/jogwheel lighting, screen mirroring, and testers wanted for S49/S61).
 
 ## Setup
 
@@ -77,7 +78,7 @@ For finding out about the detected controller, click on the icon which will show
 - All Keyboard LEDs show blue lights
     - Are you running any other NI applications while running KompleteSynthesia?
         - Some NI tools like KompleteKontrol.app do set the keyboard into something KompleteSynthesia just can not work with
-        - Exit KompleteKontrol.app - you wont need it while using Synthesia
+        - Exit KompleteKontrol.app - you wont need it while using Synthesia (on MK3, KompleteSynthesia instead needs Native Instruments' background hardware connection service running, it is left alone rather than shut down)
     - Use the "Reset" function in KompleteSynthesia drop-down menu
 
 ## Background and Motivation
