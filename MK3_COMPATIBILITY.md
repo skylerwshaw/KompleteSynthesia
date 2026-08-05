@@ -26,19 +26,26 @@ just at boot, not just one at a time.
 | Pillar | Status |
 |---|---|
 | 1. Play | Works. Unaffected by anything below. |
-| 2. LED guidance per key | Mostly works, keys light up live as you play. Regression: the device's own default lighting (buttons, jogwheel ring, touch strip) goes dark permanently the moment the first key is lit, and never comes back (see `TODO.md`). |
-| 3. Controls | **Broken for real use.** Buttons/jogwheel/knobs work fine right after boot, until the very first real key gets lit. From that point on, all control-surface input goes permanently silent until a physical USB unplug/replug. Since pillar 2 is also a goal, and lighting a key is literally the first thing that happens when someone starts playing, pillars 2 and 3 are currently mutually exclusive in practice: get lighting, lose controls. |
+| 2. LED guidance per key | Works. Keys light up live as you play, in per-key colours. |
+| 3. Controls | Works, *together with* lighting. |
 
-That conflict (not a small bug, an architectural incompatibility between how this
-app currently does lighting and how it currently does control-surface input) is why
-this has taken sustained investigation rather than a quick patch. See `TODO.md`'s top
-section for the full root-cause trail.
+**The pillar 2 vs. pillar 3 conflict is resolved.** Lighting no longer goes through the
+legacy HID LED mode that killed the control surface; the keys are lit by asking Native
+Instruments' own hardware connection service to do it, over the msgpack-RPC socket
+documented in [ODR_PROTOCOL.md](ODR_PROTOCOL.md). Verified on an S88 MK3: keys light as
+they are played while the jogwheel, buttons and knobs keep working.
 
-## Why this is hard
+This carries a dependency rather than a workaround: `NIHardwareConnectionService` must be
+running, and the service's method numbers may shift between agent releases. There is no
+legacy fallback: that path has been removed entirely because it is the bug. When the
+service is not available, an MK3 simply gets no light guide for the session; the control
+surface keeps working either way.
 
-The short version (`TODO.md` has the full evidence trail): this app currently gets
-pillar 3 (controls) via a workaround: pretending to
-be a DAW and using a Bitwig-remote-control MIDI protocol (`DrivenByMoss`/NIHIA) that
+## Why this was hard
+
+The short version (`TODO.md` has the full evidence trail): this app gets pillar 3
+(controls) via a workaround, pretending to be a DAW and using a Bitwig-remote-control
+MIDI protocol (`DrivenByMoss`/NIHIA) that
 was never designed for this use case, layered on top of pillar 2 (lighting) via a
 separate, older HID compatibility scheme (`A0 00 00` "legacy LED mode"). Confirmed via
 live testing (MIDI Monitor, bypassing this app entirely) that entering that legacy LED
@@ -46,8 +53,12 @@ mode to light a key kills the control-surface session at a level below MIDI: no
 software-side recovery trick sent over MIDI can fix it, because the break isn't in
 MIDI at all.
 
-The obvious candidate for a real fix is to stop combining two hacks and use the
-keyboard's actual native mode instead. A third-party reverse-engineering project
+The fix came from a third direction: not fighting the device for control of it, but
+becoming a client of the service that already owns it, exactly as Komplete Kontrol is.
+The rest of this section describes the native-USB route that was pursued first and is now
+a fallback plan rather than the plan.
+
+A third-party reverse-engineering project
 ([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux))
 confirmed the MK3 has a "PLUG-IN mode" that real Komplete Kontrol activates over raw USB
 bulk transfer, a single, unified channel. This app has a verified-correct
@@ -77,3 +88,6 @@ holding the interface, and is fixed, see `TODO.md`.
   independent gaps: default lighting loss, unmapped buttons, Shift+Play/Record,
   dead knob/button IDs, screen mirroring, a missing product ID). Read the top section
   for the complete root-cause investigation trail behind this doc's summary.
+- **`ODR_PROTOCOL.md`**: the service's socket protocol, how lighting actually works now,
+  and the two silent-failure traps that make it look unreachable. `scripts/odr_lightguide.py`
+  is a standalone reference client.

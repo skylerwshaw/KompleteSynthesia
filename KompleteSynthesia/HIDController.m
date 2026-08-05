@@ -14,6 +14,7 @@
 #import <IOKit/IOKitLib.h>
 
 #import "LogViewController.h"
+#import "ODRClient.h"
 #import "USBController.h"
 
 /// Detects a Komplete Kontrol S-series controller. Listens for any incoming button presses and forwards them
@@ -37,18 +38,8 @@ const uint8_t kKompleteKontrolIntensityMask = 0x03;
 const uint8_t kCommandInit = 0xA0;
 const uint8_t kKompleteKontrolInit[] = {kCommandInit, 0x00, 0x00};
 
-// MK3 devices tie their HID lightguide report and their class-compliant MIDI I/O
-// together: writing kKompleteKontrolInit above puts the device into a lighting-writable
-// state that also silences normal MIDI. This command releases it back to normal MIDI
-// operation. Every MK3 lightguide write must be wrapped by the two.
-// See https://github.com/tillt/KompleteSynthesia/discussions/29.
-const uint8_t kKompleteKontrolExitLightGuideModeMK3[] = {kCommandInit, 0x01, 0x00};
-
 const uint8_t kCommandLightGuideUpdateMK1 = 0x82;
 const uint8_t kCommandLightGuideUpdateMK2 = 0x81;
-// Confirmed via community reverse-engineering in discussion #29: MK3 uses the same
-// command byte and single-byte-per-key payload layout as MK1.
-const uint8_t kCommandLightGuideUpdateMK3 = 0x82;
 
 const size_t kKompleteKontrolLightGuideMessageSize = 250;
 const size_t kKompleteKontrolLightGuideKeyMapSize = kKompleteKontrolLightGuideMessageSize - 1;
@@ -119,6 +110,8 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
 
     dispatch_queue_t swooshQueue;
     atomic_int swooshActive;
+
+    ODRClient* odr;
 }
 
 + (NSColor*)colorWithKeyState:(const unsigned char)keyState
@@ -149,6 +142,8 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
         lastVolumeKnobValue = INTMAX_C(16);
         atomic_fetch_and(&swooshActive, 0);
         swooshQueue = dispatch_queue_create("KompleteSynthesia.SwooshQueue", NULL);
+
+        [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"mk3_odr_lighting" : @YES}];
     }
     return self;
 }
@@ -163,6 +158,13 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
     device = [self detectKeyboardController:error];
     if (device == nil) {
         return NO;
+    }
+
+    // MK3 lighting only exists via ODR (see ODR_PROTOCOL.md), attempt that connection
+    // before initKeyboardController: so odr.isConnected is known by the time anything
+    // tries to light a key.
+    if (_mk == 3) {
+        [self connectODRLighting];
     }
 
     if ([self initKeyboardController:error] == NO) {
@@ -217,6 +219,50 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
         return value;
     }
     return 0;
+}
+
+// Answered before any device is opened, because it decides whether NI's connection service
+// gets terminated at launch: an MK3 needs it alive to light keys (ODR_PROTOCOL.md), while
+// MK2 screen mirroring needs it gone to claim USB interface 3.
++ (BOOL)mk3DeviceAttached
+{
+    IOHIDManagerRef mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+    IOHIDManagerSetDeviceMatching(mgr, NULL);
+    IOHIDManagerOpen(mgr, kIOHIDOptionsTypeNone);
+
+    CFSetRef deviceSet = IOHIDManagerCopyDevices(mgr);
+    if (deviceSet == NULL) {
+        CFRelease(mgr);
+        return NO;
+    }
+
+    CFIndex deviceCount = CFSetGetCount(deviceSet);
+    IOHIDDeviceRef* devices = calloc(deviceCount, sizeof(IOHIDDeviceRef));
+    CFSetGetValues(deviceSet, (const void**)devices);
+
+    BOOL found = NO;
+    for (CFIndex i = 0; i < deviceCount && found == NO; i++) {
+        if ([HIDController vendorIDWithDevice:devices[i]] != kVendorID_NativeInstruments) {
+            continue;
+        }
+        int product = [HIDController productIDWithDevice:devices[i]];
+        found = product == kPID_S49MK3 || product == kPID_S61MK3 || product == kPID_S88MK3;
+    }
+
+    free(devices);
+    CFRelease(deviceSet);
+    CFRelease(mgr);
+
+    return found;
+}
+
++ (NSString*)stringProperty:(NSString*)property withDevice:(IOHIDDeviceRef)device
+{
+    CFTypeRef type = IOHIDDeviceGetProperty(device, (__bridge CFStringRef)property);
+    if (type && CFGetTypeID(type) == CFStringGetTypeID()) {
+        return (__bridge NSString*)type;
+    }
+    return nil;
 }
 
 + (int)productIDWithDevice:(IOHIDDeviceRef)device
@@ -442,9 +488,6 @@ static void HIDInputCallback(void* context,
                 case 2:
                     lightGuideUpdateMessage[0] = kCommandLightGuideUpdateMK2;
                     break;
-                case 3:
-                    lightGuideUpdateMessage[0] = kCommandLightGuideUpdateMK3;
-                    break;
             }
 
             // FIXME: This is likely wrong for MK1 devices!
@@ -502,9 +545,10 @@ static void HIDInputCallback(void* context,
                                            (__bridge void*)self);
 
     if (_mk == 3) {
-        // The legacy HID `A0 00 00` LED-mode scheme below is fundamentally incompatible
-        // with keeping button/knob reporting alive (see TODO.md for the full history).
-        return [self warmUpMK3WithError:error];
+        // No HID warm-up for MK3: the legacy `A0 00 00` LED-mode scheme this used to run
+        // is fundamentally incompatible with keeping button/knob reporting alive (see
+        // TODO.md), so it no longer exists. Lighting only happens via ODR.
+        return YES;
     }
 
     ret = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, *kKompleteKontrolInit, kKompleteKontrolInit,
@@ -526,45 +570,6 @@ static void HIDInputCallback(void* context,
     return YES;
 }
 
-// MK3 devices need a specific warm-up dance before they will accept lightguide updates
-// without silencing MIDI: enter LED mode, probe the known light-guide command bytes with
-// an all-off payload, push a real all-off frame, then exit LED mode. This matches the
-// sequence confirmed working by community reverse-engineering in discussion #29.
-- (BOOL)warmUpMK3WithError:(NSError**)error
-{
-    if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
-        return NO;
-    }
-    [NSThread sleepForTimeInterval:0.5];
-
-    uint8_t probe[kKompleteKontrolLightGuideMessageSize];
-    const uint8_t probeCommands[] = {0x80, 0x81, 0x82, 0x83};
-    for (size_t i = 0; i < sizeof(probeCommands); i++) {
-        memset(probe, 0, sizeof(probe));
-        probe[0] = probeCommands[i];
-        if ([self setReport:probe length:sizeof(probe) error:error] == NO) {
-            return NO;
-        }
-    }
-    [NSThread sleepForTimeInterval:0.3];
-
-    uint8_t allOff[kKompleteKontrolLightGuideMessageSize];
-    memset(allOff, 0, sizeof(allOff));
-    allOff[0] = kCommandLightGuideUpdateMK3;
-    if ([self setReport:allOff length:sizeof(allOff) error:error] == NO) {
-        return NO;
-    }
-
-    if ([self setReport:kKompleteKontrolExitLightGuideModeMK3
-                  length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
-                   error:error] == NO) {
-        return NO;
-    }
-    [NSThread sleepForTimeInterval:0.3];
-
-    return YES;
-}
-
 - (NSString*)status
 {
     return device != 0 ? _deviceName : @"disconnected";
@@ -575,6 +580,7 @@ static void HIDInputCallback(void* context,
     if (device == NULL) {
         return NO;
     }
+
     IOReturn ret = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, report[0], report, length);
     if (ret == kIOReturnSuccess) {
         return YES;
@@ -594,34 +600,55 @@ static void HIDInputCallback(void* context,
     return NO;
 }
 
+// Lighting an MK3 the legacy way costs the control surface until a physical replug, see
+// TODO.md. NI's own hardware connection service lights the keys for us without that side
+// effect (ODR_PROTOCOL.md). There is no fallback: if this fails, MK3 just goes without a
+// light guide for the session rather than risk the control surface.
+- (void)connectODRLighting
+{
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mk3_odr_lighting"] == NO) {
+        [log logLine:@"MK3 ODR lighting disabled by default, no light guide this session"];
+        return;
+    }
+
+    if ([ODRClient serviceAvailable] == NO) {
+        [log logLine:@"NI hardware connection service is not running, no MK3 light guide this session"];
+        return;
+    }
+
+    NSString* serial = [HIDController stringProperty:@kIOHIDSerialNumberKey withDevice:device];
+    if (serial.length == 0) {
+        [log logLine:@"keyboard reports no serial number, no MK3 light guide this session"];
+        return;
+    }
+
+    odr = [[ODRClient alloc] initWithLogViewController:log];
+    NSError* error = nil;
+    if ([odr connectToDeviceWithSerial:serial error:&error] == NO) {
+        [log logLine:[NSString stringWithFormat:@"no MK3 light guide this session: %@",
+                                                error.localizedDescription ?: @"unknown reason"]];
+        odr = nil;
+        return;
+    }
+}
+
 - (BOOL)updateLightGuideMap:(NSError**)error
 {
     // lightKey:/lightKeysWithColor: are called from at least two unsynchronized CoreMIDI
     // callback threads (the physical keybed's "Main" port and Synthesia's light-loopback
-    // port), plus the swoosh animation queue. For MK3 that write is a 3-report enter/
-    // payload/exit sequence; if two callers interleave those reports (e.g. both enter
-    // before either exits), the device is left stuck in LED mode, silencing all further
-    // HID/MIDI reporting until a physical replug. Serialize the whole sequence so it can
-    // never be interrupted by a concurrent caller.
+    // port), plus the swoosh animation queue. Serialize the whole sequence so an ODR write
+    // can never be interleaved with a concurrent caller's.
     @synchronized(self) {
+        if (odr.isConnected) {
+            // The service's LED array is indexed by MIDI note; keyOffset is the note of
+            // key 0 negated (-21 for an 88-key, so key 0 is A0).
+            return [odr setKeyColors:_keys count:_keyCount firstNote:-_keyOffset];
+        }
         if (_mk == 3) {
-            // See kKompleteKontrolExitLightGuideModeMK3 above, every lightguide write
-            // must be wrapped in an enter/exit of the MK3's LED mode or the device stops
-            // emitting MIDI. Per GitHub discussion #29 (ca9), entering that mode disrupts
-            // the whole class-compliant MIDI interface, not just note events: it kills
-            // the DAW-port NIHIA session used for button/knob reporting, and nothing
-            // tried so far (resending the MIDI handshake, an HID-level recovery packet)
-            // restores it. MIDI Monitor confirms the break is below the MIDI layer
-            // entirely. See TODO.md for the real fix in progress.
-            if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
-                return NO;
-            }
-            if ([self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error] == NO) {
-                return NO;
-            }
-            return [self setReport:kKompleteKontrolExitLightGuideModeMK3
-                             length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
-                              error:error];
+            // No ODR connection means no safe way to light an MK3: the legacy HID LED
+            // mode kills the control surface until a physical replug (see TODO.md), so
+            // skip lighting rather than use it. No light guide this session.
+            return YES;
         }
         return [self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error];
     }

@@ -41,6 +41,7 @@ enum { kAlienHardwareAgent = 0, kAlienHostIntegration, kAlienDaemon, kAlienConne
     BOOL restartAlien[kAlienItemCount];
     unsigned int awaitingAlienCount;
     BOOL usbAvailable;
+    BOOL keepConnectionService;
 }
 
 NSString* kHardwareAgentName = @"NIHardwareAgent.app";
@@ -95,12 +96,23 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
         kConnectionServiceBundleIdentifier
     ];
 
+    // An MK3's keys are lit *through* the connection service rather than by us, so there
+    // it is an ally and has to keep running (see ODR_PROTOCOL.md). Only MK2 screen
+    // mirroring needs the USB interface it holds, so everything else is unaffected.
+    keepConnectionService = [HIDController mk3DeviceAttached];
+    if (keepConnectionService) {
+        [_log logLine:@"MK3 attached, keeping NI's connection service for lighting"];
+    }
+
     awaitingAlienCount = 0;
 
     assert(items.count == kAlienItemCount);
 
     // Identify unwanted processes.
     for (int i = 0; i < kAlienItemCount; i++) {
+        if (i == kAlienConnectionService && keepConnectionService) {
+            continue;
+        }
         if ([ApplicationObserver applicationIsRunning:items[i]] == YES) {
             ++awaitingAlienCount;
             [_log logLine:[NSString stringWithFormat:fmtAssert, items[i]]];
@@ -116,6 +128,9 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     }
 
     for (int i = 0; i < kAlienItemCount; i++) {
+        if (i == kAlienConnectionService && keepConnectionService) {
+            continue;
+        }
         if ([ApplicationObserver applicationIsRunning:items[i]] == NO) {
             continue;
         }

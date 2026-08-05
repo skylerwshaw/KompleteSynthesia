@@ -136,6 +136,9 @@ enum {
 
 + (NSColor*)colorWithKeyState:(const unsigned char)keyState;
 
+// Whether an MK3 keyboard is plugged in, answerable before any device is opened.
++ (BOOL)mk3DeviceAttached;
+
 - (id)initWithUSBController:(USBController*)uc logViewController:(LogViewController*)lc;
 
 - (BOOL)setupWithError:(NSError**)error;
