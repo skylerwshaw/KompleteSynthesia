@@ -26,6 +26,14 @@ Chose your favorite lightguide colors or work with the defaults.
 
 ![Lightguide Setup](site/images/Setup_Dialog.png)
 
+## MK3 support (in progress)
+
+Native Instruments Komplete Kontrol S-series **MK3** keyboards are only partially
+supported today, play and light guide work, but the control surface (buttons,
+jogwheel, knobs) stops responding after the first lit key. See
+[MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) for the mission, current status, and
+why fixing it requires ongoing work beyond app code.
+
 ## Setup
 
 You first need to configure your system and Synthesia to support our way of routing the lighting information to KompleteSynthesia. Please follow [SETUP.md](SETUP.md).
