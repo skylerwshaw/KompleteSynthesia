@@ -294,6 +294,13 @@ static void setMk1ColorWithMk2ColorCode(unsigned char mk2ColorCode, unsigned cha
     [log logLine:[NSString stringWithFormat:@"hid report: %@", hex]];
 #endif
 
+    if (_mk == 3) {
+        // MK3 report interpretation isn't implemented yet, the raw hex above is what's
+        // used to reverse-engineer its report layout. Bail before the MK1/MK2-specific
+        // parsing below, which assumes a report shape that doesn't apply here.
+        return;
+    }
+
     if (report[0] != 0x01) {
         NSLog(@"ignoring report %02Xh", report[0]);
         return;
@@ -369,7 +376,9 @@ static void HIDInputCallback(void* context,
     HIDController* controller = (__bridge HIDController*)context;
 
     assert(report);
-    if (reportLength > 8) {
+    // MK3's shortest meaningful report (0x01, carrying the discrete buttons) is only 6
+    // bytes, shorter than the >8 threshold that's fine for MK1/MK2.
+    if (reportLength > 8 || controller.mk == 3) {
         [controller receivedReport:report length:(int)reportLength];
     }
 }

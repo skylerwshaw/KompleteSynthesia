@@ -11,7 +11,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(int, ConnectionInterface) {
     kMIDIConnectionInterfaceLightLoopback = 0,
-    kMIDIConnectionInterfaceKeyboard = 1
+    kMIDIConnectionInterfaceKeyboard = 1,
+    // MK3 controllers surface buttons/jogwheel as MIDI on a "DAW" port (Mackie-Control
+    // style transport surface) rather than through the vendor HID interface.
+    kMIDIConnectionInterfaceControlSurface = 2
 };
 
 @class LogViewController;

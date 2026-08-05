@@ -29,6 +29,43 @@ const unsigned char kKeyStateMaskThumb = 0x08;
 const unsigned char kKeyStateMaskUser = 0x10;
 const unsigned char kKeyStateMaskMusic = 0x20;
 
+// MK3 control-surface CC map, received on the "DAW" MIDI port (see MIDIController.m,
+// kMIDIConnectionInterfaceControlSurface) once the NIHIA handshake there completes:
+// these buttons/jogwheel never show up on the vendor HID interface at all. This is the
+// real, raw NIHIA protocol (matching git-moss/DrivenByMoss's KontrolProtocolControlSurface
+// CC constants), confirmed via live capture against real S88 MK3 hardware. An earlier,
+// now-removed Note-based map was a red herring: it only ever reflected Komplete Kontrol's
+// own software translating internally, not something the bare device sends on its own.
+static const unsigned char kMK3ControlSurfaceCCPlay = 0x10;
+static const unsigned char kMK3ControlSurfaceCCRecord = 0x12;
+static const unsigned char kMK3ControlSurfaceCCStop = 0x14;
+static const unsigned char kMK3ControlSurfaceCCLoop = 0x16;
+static const unsigned char kMK3ControlSurfaceCCMetro = 0x17;
+static const unsigned char kMK3ControlSurfaceCCTapTempo = 0x18;
+static const unsigned char kMK3ControlSurfaceCCUndo = 0x20;
+static const unsigned char kMK3ControlSurfaceCCRedo = 0x21;
+static const unsigned char kMK3ControlSurfaceCCQuantize = 0x22;
+static const unsigned char kMK3ControlSurfaceCCAutomation = 0x23;
+// Jogwheel tilt left/right; value >= 64 is left, < 64 is right.
+static const unsigned char kMK3ControlSurfaceCCNavigateTracks = 0x30;
+// Page Left/Right buttons; value >= 64 is left, < 64 is right.
+static const unsigned char kMK3ControlSurfaceCCNavigateBanks = 0x31;
+// Jogwheel tilt up/down; value >= 64 is up, < 64 is down.
+static const unsigned char kMK3ControlSurfaceCCNavigateClips = 0x32;
+// Jogwheel continuous rotation (distinct from the 4-way tilt above), same relative
+// encoder convention as the knobs: 1-63 is clockwise (that magnitude), 65-127 is
+// counter-clockwise (128 - value).
+static const unsigned char kMK3ControlSurfaceCCJogScroll = 0x34;
+// Previous/Next (browser) buttons; value >= 64 is previous, < 64 is next.
+static const unsigned char kMK3ControlSurfaceCCNavigatePresets = 0x36;
+// Jogwheel center press.
+static const unsigned char kMK3ControlSurfaceCCPlaySelectedClip = 0x60;
+// The 8 knobs below the screen, left to right: CC 0x50 + (knob index 0-7). Continuous
+// relative encoders: each detent sends its own signed delta, not a single message per
+// gesture. 1-63 is clockwise (that magnitude), 65-127 is counter-clockwise (128 - value).
+static const unsigned char kMK3ControlSurfaceCCKnobBase = 0x50;
+static const unsigned char kMK3ControlSurfaceCCKnobCount = 8;
+
 @interface MIDI2HIDController ()
 @end
 
@@ -261,12 +298,103 @@ const unsigned char kKeyStateMaskMusic = 0x20;
 
 #pragma mark - MIDIControllerDelegate
 
+- (void)receivedMK3ControlSurfaceCC:(unsigned char)cc value:(unsigned char)value
+{
+    switch (cc) {
+        case kMK3ControlSurfaceCCPlay:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdPlay value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCRecord:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdRecord value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCStop:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdStop value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCLoop:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdLoop value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCMetro:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdMetro value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCTapTempo:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdTempo value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCUndo:
+        case kMK3ControlSurfaceCCRedo:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdUndoRedo value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCQuantize:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdQuantize value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCAutomation:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdAuto value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCPlaySelectedClip:
+            if (value > 0) {
+                [self receivedEvent:kKompleteKontrolButtonIdJogPress value:0];
+            }
+            break;
+        case kMK3ControlSurfaceCCNavigateTracks:
+            [self receivedEvent:(value >= 64 ? kKompleteKontrolButtonIdJogLeft : kKompleteKontrolButtonIdJogRight)
+                           value:0];
+            break;
+        case kMK3ControlSurfaceCCNavigateClips:
+            [self receivedEvent:(value >= 64 ? kKompleteKontrolButtonIdJogUp : kKompleteKontrolButtonIdJogDown)
+                           value:0];
+            break;
+        case kMK3ControlSurfaceCCNavigateBanks:
+            [self receivedEvent:(value >= 64 ? kKompleteKontrolButtonIdPageLeft : kKompleteKontrolButtonIdPageRight)
+                           value:0];
+            break;
+        case kMK3ControlSurfaceCCNavigatePresets:
+            [self receivedEvent:(value >= 64 ? kKompleteKontrolButtonIdPresetUp : kKompleteKontrolButtonIdPresetDown)
+                           value:0];
+            break;
+        case kMK3ControlSurfaceCCJogScroll: {
+            int delta = value <= 63 ? value : -(128 - value);
+            [self receivedEvent:kKompleteKontrolButtonIdJogScroll value:delta];
+            break;
+        }
+        default:
+            if (cc >= kMK3ControlSurfaceCCKnobBase && cc < kMK3ControlSurfaceCCKnobBase + kMK3ControlSurfaceCCKnobCount) {
+                int delta = value <= 63 ? value : -(128 - value);
+                [self receivedEvent:kKompleteKontrolButtonIdKnob1 + (cc - kMK3ControlSurfaceCCKnobBase) value:delta];
+            }
+            break;
+    }
+}
+
 - (void)receivedMIDIEvent:(unsigned char)cv
                   channel:(unsigned char)channel
                    param1:(unsigned char)param1
                    param2:(unsigned char)param2
                 interface:(unsigned char)interface;
 {
+    if (interface == kMIDIConnectionInterfaceControlSurface) {
+        if (cv == kMIDICVStatusControlChange) {
+            [self receivedMK3ControlSurfaceCC:param1 value:param2];
+        }
+        return;
+    }
+
     if (cv != kMIDICVStatusNoteOn && cv != kMIDICVStatusNoteOff && cv != kMIDICVStatusControlChange) {
         return;
     }
@@ -403,6 +531,12 @@ const unsigned char kKeyStateMaskMusic = 0x20;
             [VirtualEvent triggerMouseWheelEvent:-value];
             break;
         case kKompleteKontrolButtonIdKnob1:
+            // MK1/MK2 have one dedicated physical volume knob bound to this ID. MK3's
+            // Knob1 is just the leftmost of 8 generic, context-dependent knobs, leave it
+            // unmapped there rather than repurposing it for system volume.
+            if (hid.mk == 3) {
+                break;
+            }
             if (value > 0) {
                 [log logLine:@"KNOB1 -> sending volume up"];
                 [VirtualEvent triggerAuxKeyEvents:0];
