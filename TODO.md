@@ -44,36 +44,16 @@ fix this bug: measured on hardware with NI's service dead and this app owning in
 3, the control surface went from 108 CC packets to zero the instant Synthesia lit keys.
 Entering legacy LED mode kills it on its own.
 
-**Ruled out: the ~8s heartbeat, this time on the right transport.** The mystery
-`06 00 00 00 93 02 cd 01 2c 90` packet decodes as MessagePack `[2, 300, []]` in exactly
-the framing `MK3Protocol.m` already builds, so it belongs on interface 3 bulk, the one
-transport the earlier HID and CoreMIDI attempts never tried. Sent every 8s over bulk with
-every transfer confirmed delivered, the control surface still died on the first lighting
-write (31 CC packets, then zero). `MK3MakeKeepAlivePacket()` is kept, but only runs
-alongside the PLUG-IN handshake, the context it was captured in.
-
-**Ruled out: the device answering on bulk.** `startBulkReadOnEndpoint:handler:error:` in
-`USBController.m` reads endpoint `0x83` continuously (`-mk3_bulk_read YES`); no capture in
-any reverse-engineering effort had ever looked at device-to-host traffic here. The device
-sends nothing: zero packets while idle, and zero while working the jogwheel and buttons
-hard enough to produce 393 CC packets over MIDI. Inputs come over MIDI, full stop.
-
-**PLUG-IN mode: handshake confirmed delivered, device ignores it.** The S88 MK3's actual
-"PLUG-IN mode" is confirmed by a third-party reverse-engineering project
-([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux),
-Wireshark captures of real Komplete Kontrol), activated via a MessagePack-encoded
-handshake over raw USB bulk transfer. `KompleteSynthesia/MK3Protocol.h`/`.m` implement
-that handshake (verified byte-for-byte against the Python reference) and it can be sent
-with `-mk3_plugin_mode_probe YES`. The earlier inconclusive run is resolved: all three
-packets now report `delivered` in ~125ms rather than burning 1s timeouts, and the device
-still shows no visible change, no reply on bulk in, and unchanged MIDI behaviour. So the
-handshake alone is not what switches modes, something else in real Komplete Kontrol's
-startup is missing, plausibly a control transfer or an alternate interface setting that no
-capture has looked at. Note the ceiling even if that is found: the reference project's
-light guide support is *planned*, its LIGHTS message is undecoded, and it never reads from
-the device, so PLUG-IN mode's lighting and input protocols would still need capturing from
-scratch. **Details in `DRIVERKIT_INVESTIGATION.md`**, read it before attempting this
-again.
+**Ruled out via raw USB interface 3, before the ODR fix below was found:** replaying the
+mystery `06 00 00 00 93 02 cd 01 2c 90` heartbeat over bulk (the transport it actually
+belongs on, decoded as MessagePack `[2, 300, []]`) every 8s, with every transfer confirmed
+delivered, did not stop the control surface dying on the first lighting write. Reading the
+device's bulk IN endpoint continuously showed it sends nothing back, ever: inputs come
+over MIDI, full stop. And activating the MK3's real "PLUG-IN mode" (confirmed to exist by
+the third-party [`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux)
+reverse-engineering project) via its MessagePack handshake over bulk, with delivery
+confirmed, produced no visible change on the device: the handshake alone doesn't switch
+modes, and even if it did, that project's light guide and input protocols are undecoded.
 
 **Solved, by not fighting the device at all: see [ODR_PROTOCOL.md](ODR_PROTOCOL.md).**
 `NIHardwareConnectionService` (the process we had been killing to get at USB interface 3)

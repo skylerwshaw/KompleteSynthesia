@@ -28,9 +28,8 @@ static const NSUInteger kODRLedCount = 128;
 
 static const NSTimeInterval kODRReplyTimeout = 2.0;
 
-// Minimal MessagePack encoding, same approach as MK3Protocol.m but for the types this
-// protocol needs: the 36-character client UUID needs str8, and the 128-entry LED array
-// needs array16, neither of which fits that file's fixstr/fixarray helpers.
+// Minimal MessagePack encoding for the types this protocol needs: the 36-character
+// client UUID needs str8, and the 128-entry LED array needs array16.
 
 static void ODRAppendUInt(NSMutableData* d, uint32_t value)
 {
