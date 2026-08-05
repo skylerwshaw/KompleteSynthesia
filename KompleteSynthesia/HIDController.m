@@ -37,23 +37,18 @@ const uint8_t kKompleteKontrolIntensityMask = 0x03;
 const uint8_t kCommandInit = 0xA0;
 const uint8_t kKompleteKontrolInit[] = {kCommandInit, 0x00, 0x00};
 
-// FIXME: This likely is not be enough to get the MK3 controller fully initialized. It is what
-// FIXME: Komplete Kontrol sends on an 8 second interval to the controller.
-const uint8_t kKompleteKontrolInitMK3[] = {0x06, 0x00, 0x00, 0x00, 0x93, 0x02, 0xcd, 0x01, 0x2c, 0x90};
+// MK3 devices tie their HID lightguide report and their class-compliant MIDI I/O
+// together: writing kKompleteKontrolInit above puts the device into a lighting-writable
+// state that also silences normal MIDI. This command releases it back to normal MIDI
+// operation. Every MK3 lightguide write must be wrapped by the two.
+// See https://github.com/tillt/KompleteSynthesia/discussions/29.
+const uint8_t kKompleteKontrolExitLightGuideModeMK3[] = {kCommandInit, 0x01, 0x00};
 
 const uint8_t kCommandLightGuideUpdateMK1 = 0x82;
 const uint8_t kCommandLightGuideUpdateMK2 = 0x81;
-
-// FIXME: This appears to be wrong for MK3 devices -- instead of lighting keys, we are
-// FIXME: lighting the touchstrip with 0x81.
-// const uint8_t kCommandLightGuideUpdateMK3 = 0x81;
-
-// See https://github.com/tillt/KompleteSynthesia/discussions/29#discussioncomment-8089141
-const uint8_t kKompleteKontrolLightGuidePrefixMK3[] = {0x93, 0x02, 0xCD, 0x01, 0x16, 0x92, 0xCD, 0x01,
-                                                       0x51, 0x81, 0xCC, 0xFC, 0xDC, 0x00, 0x80};
-const uint8_t kCommandLightGuideKeyCommandMK3 = 0x92;
-
-const size_t kKompleteKontrolLightGuideMessageSizeMK3 = 403;
+// Confirmed via community reverse-engineering in discussion #29: MK3 uses the same
+// command byte and single-byte-per-key payload layout as MK1.
+const uint8_t kCommandLightGuideUpdateMK3 = 0x82;
 
 const size_t kKompleteKontrolLightGuideMessageSize = 250;
 const size_t kKompleteKontrolLightGuideKeyMapSize = kKompleteKontrolLightGuideMessageSize - 1;
@@ -111,7 +106,6 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
 
     size_t lightGuideUpdateMessageSize;
     unsigned char* lightGuideUpdateMessage;
-    NSMutableData* lightGuideStreamMK3;
 
     unsigned char buttonLightingFeedback[kKompleteKontrolButtonsMessageSize];
     unsigned char buttonLightingUpdateMessage[kKompleteKontrolButtonsMessageSize];
@@ -175,12 +169,7 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
         return NO;
     }
 
-    if (_mk == 3) {
-        // TODO: Make this less magic. Consider abstracting away from this direct buffer access.
-        _keys = lightGuideUpdateMessage + 4 + sizeof(kKompleteKontrolLightGuidePrefixMK3);
-    } else {
-        _keys = &lightGuideUpdateMessage[1];
-    }
+    _keys = &lightGuideUpdateMessage[1];
 
     [self lightKeysWithColor:kKeyColorUnpressed];
 
@@ -435,25 +424,18 @@ static void HIDInputCallback(void* context,
             _mk = [supportedDevices[@(product)][@"mk"] intValue];
             _keyOffset = [supportedDevices[@(product)][@"offset"] intValue];
 
-            lightGuideUpdateMessageSize =
-                _mk == 3 ? kKompleteKontrolLightGuideMessageSizeMK3 : kKompleteKontrolLightGuideMessageSize;
-
-            lightGuideStreamMK3 = nil;
-
-            if (_mk == 3) {
-                lightGuideStreamMK3 = [[NSMutableData alloc] initWithCapacity:lightGuideUpdateMessageSize];
-                unsigned int length = (unsigned int)lightGuideUpdateMessageSize - 4;
-                [lightGuideStreamMK3 appendBytes:&length length:sizeof(length)];
-                [lightGuideStreamMK3 appendBytes:&kKompleteKontrolLightGuidePrefixMK3
-                                          length:sizeof(kKompleteKontrolLightGuidePrefixMK3)];
-                for (int i = 0; i < 128; i++) {
-                    unsigned char entry[] = {0x92, 0x00, 0x00};
-                    [lightGuideStreamMK3 appendBytes:entry length:sizeof(entry)];
-                }
-                lightGuideUpdateMessage = (unsigned char*)lightGuideStreamMK3.bytes;
-            } else {
-                lightGuideUpdateMessage = calloc(lightGuideUpdateMessageSize, 1);
-                lightGuideUpdateMessage[0] = _mk == 1 ? kCommandLightGuideUpdateMK1 : kCommandLightGuideUpdateMK2;
+            lightGuideUpdateMessageSize = kKompleteKontrolLightGuideMessageSize;
+            lightGuideUpdateMessage = calloc(lightGuideUpdateMessageSize, 1);
+            switch (_mk) {
+                case 1:
+                    lightGuideUpdateMessage[0] = kCommandLightGuideUpdateMK1;
+                    break;
+                case 2:
+                    lightGuideUpdateMessage[0] = kCommandLightGuideUpdateMK2;
+                    break;
+                case 3:
+                    lightGuideUpdateMessage[0] = kCommandLightGuideUpdateMK3;
+                    break;
             }
 
             // FIXME: This is likely wrong for MK1 devices!
@@ -510,9 +492,12 @@ static void HIDInputCallback(void* context,
     IOHIDDeviceRegisterInputReportCallback(device, inputBuffer, sizeof(inputBuffer), HIDInputCallback,
                                            (__bridge void*)self);
 
-    const uint8_t* init = _mk == 3 ? kKompleteKontrolInitMK3 : kKompleteKontrolInit;
-    size_t length = _mk == 3 ? sizeof(kKompleteKontrolInitMK3) : sizeof(kKompleteKontrolInit);
-    ret = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, *init, init, length);
+    if (_mk == 3) {
+        return [self warmUpMK3WithError:error];
+    }
+
+    ret = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, *kKompleteKontrolInit, kKompleteKontrolInit,
+                               sizeof(kKompleteKontrolInit));
     if (ret != kIOReturnSuccess) {
         if (error != nil) {
             NSDictionary* userInfo = @{
@@ -526,6 +511,45 @@ static void HIDInputCallback(void* context,
         }
         return NO;
     }
+
+    return YES;
+}
+
+// MK3 devices need a specific warm-up dance before they will accept lightguide updates
+// without silencing MIDI: enter LED mode, probe the known light-guide command bytes with
+// an all-off payload, push a real all-off frame, then exit LED mode. This matches the
+// sequence confirmed working by community reverse-engineering in discussion #29.
+- (BOOL)warmUpMK3WithError:(NSError**)error
+{
+    if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
+        return NO;
+    }
+    [NSThread sleepForTimeInterval:0.5];
+
+    uint8_t probe[kKompleteKontrolLightGuideMessageSize];
+    const uint8_t probeCommands[] = {0x80, 0x81, 0x82, 0x83};
+    for (size_t i = 0; i < sizeof(probeCommands); i++) {
+        memset(probe, 0, sizeof(probe));
+        probe[0] = probeCommands[i];
+        if ([self setReport:probe length:sizeof(probe) error:error] == NO) {
+            return NO;
+        }
+    }
+    [NSThread sleepForTimeInterval:0.3];
+
+    uint8_t allOff[kKompleteKontrolLightGuideMessageSize];
+    memset(allOff, 0, sizeof(allOff));
+    allOff[0] = kCommandLightGuideUpdateMK3;
+    if ([self setReport:allOff length:sizeof(allOff) error:error] == NO) {
+        return NO;
+    }
+
+    if ([self setReport:kKompleteKontrolExitLightGuideModeMK3
+                  length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
+                   error:error] == NO) {
+        return NO;
+    }
+    [NSThread sleepForTimeInterval:0.3];
 
     return YES;
 }
@@ -561,12 +585,19 @@ static void HIDInputCallback(void* context,
 
 - (BOOL)updateLightGuideMap:(NSError**)error
 {
-    extern const double kTimeoutDelay;
-
     if (_mk == 3) {
-        BOOL ret = [usb bulkWriteData:lightGuideStreamMK3 error:error];
-        [usb waitForBulkTransfer:kTimeoutDelay];
-        return ret;
+        // See kKompleteKontrolExitLightGuideModeMK3 above: every lightguide write must
+        // be wrapped in an enter/exit of the MK3's LED mode or the device stops emitting
+        // MIDI.
+        if ([self setReport:kKompleteKontrolInit length:sizeof(kKompleteKontrolInit) error:error] == NO) {
+            return NO;
+        }
+        if ([self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error] == NO) {
+            return NO;
+        }
+        return [self setReport:kKompleteKontrolExitLightGuideModeMK3
+                         length:sizeof(kKompleteKontrolExitLightGuideModeMK3)
+                          error:error];
     }
     return [self setReport:lightGuideUpdateMessage length:lightGuideUpdateMessageSize error:error];
 }
@@ -578,12 +609,8 @@ static void HIDInputCallback(void* context,
             setMk1ColorWithMk2ColorCode(color, &_keys[key * 3]);
             break;
         case 2:
-            _keys[key] = color;
-            break;
         case 3:
-            _keys[key * 3 + 0] = kCommandLightGuideKeyCommandMK3;
-            _keys[key * 3 + 1] = key;
-            _keys[key * 3 + 2] = color;
+            _keys[key] = color;
             break;
     }
     [self updateLightGuideMap:nil];
@@ -602,14 +629,8 @@ static void HIDInputCallback(void* context,
             }
             break;
         case 2:
-            memset(_keys, color, kKompleteKontrolLightGuideKeyMapSize);
-            break;
         case 3:
-            for (unsigned int i = 0; i < 128; i++) {
-                _keys[i * 3 + 0] = kCommandLightGuideKeyCommandMK3;
-                _keys[i * 3 + 1] = i;
-                _keys[i * 3 + 2] = color;
-            }
+            memset(_keys, color, kKompleteKontrolLightGuideKeyMapSize);
             break;
     }
 

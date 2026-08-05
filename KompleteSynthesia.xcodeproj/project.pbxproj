@@ -40,8 +40,8 @@
 		BB3182172967A037005EB410 /* HIDController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HIDController.h; sourceTree = "<group>"; };
 		BB3182182967A037005EB410 /* HIDController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HIDController.m; sourceTree = "<group>"; };
 		BB31821A2967C85F005EB410 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		BB34BC1D2B081E45004CF123 /* build_dmg.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; name = build_dmg.sh; path = Scripts/build_dmg.sh; sourceTree = "<group>"; };
-		BB34BC1E2B081E45004CF123 /* set_build_number.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; name = set_build_number.sh; path = Scripts/set_build_number.sh; sourceTree = "<group>"; };
+		BB34BC1D2B081E45004CF123 /* build_dmg.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; name = build_dmg.sh; path = scripts/build_dmg.sh; sourceTree = "<group>"; };
+		BB34BC1E2B081E45004CF123 /* set_build_number.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; name = set_build_number.sh; path = scripts/set_build_number.sh; sourceTree = "<group>"; };
 		BB49B3AD295CC8AE00D18605 /* KompleteSynthesia.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KompleteSynthesia.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB49B3B0295CC8AE00D18605 /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		BB49B3B1295CC8AE00D18605 /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
@@ -289,7 +289,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\n$SRCROOT/Scripts/set_build_number.sh\n";
+			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\n$SRCROOT/scripts/set_build_number.sh\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

@@ -68,3 +68,7 @@ fastlane/test_output
 # https://github.com/johnno1962/injectionforxcode
 
 iOSInjectionProject/
+
+## Tooling artifacts, not part of the project
+.DS_Store
+.playwright-mcp/
