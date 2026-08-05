@@ -34,7 +34,7 @@ app currently does lighting and how it currently does control-surface input) is 
 this has taken sustained investigation rather than a quick patch. See `TODO.md`'s top
 section for the full root-cause trail.
 
-## Why this needs a DriverKit system extension
+## Why this is hard
 
 The short version (`TODO.md` has the full evidence trail): this app currently gets
 pillar 3 (controls) via a workaround: pretending to
@@ -46,21 +46,30 @@ mode to light a key kills the control-surface session at a level below MIDI: no
 software-side recovery trick sent over MIDI can fix it, because the break isn't in
 MIDI at all.
 
-The real fix isn't a workaround for the workaround, it's to stop combining two hacks
-and use the keyboard's actual native mode instead. A third-party reverse-engineering
-project ([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux))
-confirmed the MK3 has a real, full-featured "PLUG-IN mode" that real Komplete Kontrol
-activates over raw USB bulk transfer: a single, unified channel, not a
-lighting-hack-plus-fake-DAW combination. This app already has a verified-correct
-implementation of that mode's activation handshake.
+The obvious candidate for a real fix is to stop combining two hacks and use the
+keyboard's actual native mode instead. A third-party reverse-engineering project
+([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux))
+confirmed the MK3 has a "PLUG-IN mode" that real Komplete Kontrol activates over raw USB
+bulk transfer, a single, unified channel. This app has a verified-correct
+implementation of that mode's activation handshake, and can now send it.
 
-The blocker: macOS refuses to let this ordinary app claim the USB interface that mode
-requires (`kIOReturnExclusiveAccess`, something else, almost certainly the OS's own
-built-in USB Audio/MIDI class driver, already owns it). Reliably taking a USB interface
-away from a driver macOS has already matched requires a **DriverKit system
-extension**, a fundamentally different category of engineering than app code (a
-separate signed target, an entitlement request to Apple, a user-facing system
-extension approval flow).
+Two things stand in the way, and neither is a macOS driver problem:
+
+1. **PLUG-IN mode's useful half is undecoded.** That project implements exactly one
+   feature, arpeggiator tempo sync. Its light guide support is listed as *planned*, its
+   LIGHTS message is explicitly not decoded, and its code never reads from the device at
+   all, so how buttons and knobs report back in PLUG-IN mode is unknown to everyone.
+   Getting there requires Wireshark captures of real Komplete Kontrol, the same way that
+   project got tempo.
+2. **Entering legacy LED mode kills the control surface by itself.** This was previously
+   blamed on USB contention with Native Instruments' background service. That has now
+   been ruled out by measurement: with NI's service stopped and this app owning USB
+   interface 3, the control surface still went from 108 CC packets to zero the moment
+   Synthesia lit keys.
+
+The USB access problem that used to be described here as needing a DriverKit system
+extension turned out to be Native Instruments' own `NIHardwareConnectionService`
+holding the interface, and is fixed, see `TODO.md`.
 
 ## Where to go next
 

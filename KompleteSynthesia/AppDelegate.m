@@ -35,7 +35,7 @@
 
 @end
 
-enum { kAlienHardwareAgent = 0, kAlienHostIntegration, kAlienDaemon, kAlienItemCount };
+enum { kAlienHardwareAgent = 0, kAlienHostIntegration, kAlienDaemon, kAlienConnectionService, kAlienItemCount };
 
 @implementation AppDelegate {
     BOOL restartAlien[kAlienItemCount];
@@ -55,6 +55,13 @@ NSString* kHostIntegrationAgentPath =
 NSString* kDaemonName = @"NTKDaemon.app";
 NSString* kDaemonBundleIdentifier = @"com.native-instruments.NTKDaemon";
 NSString* kDaemonPath = @"/Library/Application Support/Native Instruments/NTK/NTKDaemon.app";
+
+// Native Instruments 2.x moved hardware connection handling into this separate service.
+// It claims USB interface 3 exclusively (confirmed via `ioreg -l -w0 | rg -A20 "ODR@3"`),
+// which is the very interface both MK2 screen mirroring and MK3 bulk transfer need.
+NSString* kConnectionServiceBundleIdentifier = @"com.native-instruments.NIHardwareConnectionService";
+NSString* kConnectionServicePath = @"/Library/Application Support/Native Instruments/Hardware/Hardware "
+                                   @"Connection Service/NIHardwareConnectionService.app";
 
 NSString* kAppDefaultActivateSynthesia = @"forward_buttons_to_synthesia_only";
 NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
@@ -83,8 +90,10 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     NSString* fmtFailed = @"failed to stop %@";
     NSString* fmtSkipping = @"%@ is not running";
 
-    NSArray<NSString*>* items =
-        @[ kHardwareAgentBundleIdentifier, kHostIntegrationAgentBundleIdentifier, kDaemonBundleIdentifier ];
+    NSArray<NSString*>* items = @[
+        kHardwareAgentBundleIdentifier, kHostIntegrationAgentBundleIdentifier, kDaemonBundleIdentifier,
+        kConnectionServiceBundleIdentifier
+    ];
 
     awaitingAlienCount = 0;
 
@@ -286,7 +295,8 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     }
     [_midi2hidController teardown];
 
-    NSArray<NSString*>* items = @[ kHardwareAgentPath, kHostIntegrationAgentPath, kDaemonPath ];
+    NSArray<NSString*>* items =
+        @[ kHardwareAgentPath, kHostIntegrationAgentPath, kDaemonPath, kConnectionServicePath ];
 
     assert(items.count == kAlienItemCount);
 

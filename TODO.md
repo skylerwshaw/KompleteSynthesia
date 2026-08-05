@@ -3,7 +3,7 @@
 Most items below are MK3 gaps. For why MK3 support matters and where things stand
 overall, see [MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) first.
 
-## MK3 control surface: unresponsive after first real key-light write (blocked on macOS driver access, see DRIVERKIT_INVESTIGATION.md)
+## MK3 control surface: unresponsive after first real key-light write
 
 The S88 MK3's control surface (buttons/jogwheel/knobs, over the `"DAW"` MIDI port
 after the NIHIA handshake in `MIDIController.m`) goes fully unresponsive the first
@@ -25,19 +25,28 @@ light-loopback port, both hitting `updateLightGuideMap:` unsynchronized) was fou
 fixed regardless (`@synchronized(self)` in `HIDController.m`), real bug, kept, but
 not the cause of this symptom (doesn't reproduce solo).
 
-**The real fix**: the S88 MK3 has an actual full-featured "PLUG-IN mode", confirmed by
-a third-party reverse-engineering project
+**Ruled out: USB contention with Native Instruments' background service.** The
+`kIOReturnExclusiveAccess` error that used to block raw USB access came from
+`NIHardwareConnectionService`, an ordinary NI 2.x userspace app holding USB interface 3
+(`ioreg -l -w0 | rg -A20 "ODR@3" | rg UsbExclusiveOwner`), not from a macOS class driver
+as previously assumed. It is now terminated at launch alongside the three older NI
+processes `AppDelegate.m` already handled, and interface 3 opens cleanly. That did not
+fix this bug: measured on hardware with NI's service dead and this app owning interface
+3, the control surface went from 108 CC packets to zero the instant Synthesia lit keys.
+Entering legacy LED mode kills it on its own.
+
+**Still the leading candidate for a real fix**: the S88 MK3's actual "PLUG-IN mode",
+confirmed by a third-party reverse-engineering project
 ([`kontrol-s88-mk3-linux`](https://github.com/HugginsIndustries/kontrol-s88-mk3-linux),
 Wireshark captures of real Komplete Kontrol), activated via a MessagePack-encoded
-handshake over raw USB bulk transfer, not the HID scheme this app and GitHub
-discussion #29 have used. `KompleteSynthesia/MK3Protocol.h`/`.m` implement that
-handshake (verified byte-for-byte against the Python reference). Attempting it from
-this app failed: macOS returns `kIOReturnExclusiveAccess` when claiming the needed USB
-interface: something else (almost certainly the OS's own built-in USB Audio/MIDI
-class driver) already owns it, and a normal sandboxed app has no way to evict that the
-way Linux's `detachKernelDriver()` does. Getting real USB access likely requires a
-DriverKit system extension. **Full details, sources, and a scoped first step are in
-`DRIVERKIT_INVESTIGATION.md`**, read that before attempting this again.
+handshake over raw USB bulk transfer. `KompleteSynthesia/MK3Protocol.h`/`.m` implement
+that handshake (verified byte-for-byte against the Python reference) and it can now be
+sent with `-mk3_plugin_mode_probe YES`. The first probe run changed nothing observable,
+but was inconclusive for a known reason (write callbacks can't fire that early in
+startup). Note the ceiling even if it works: that project's light guide support is
+*planned*, its LIGHTS message is undecoded, and it never reads from the device, so
+PLUG-IN mode's lighting and input protocols would still need capturing from scratch.
+**Details in `DRIVERKIT_INVESTIGATION.md`**, read it before attempting this again.
 
 Also found and fixed in passing: `USBController.m`'s `kUSBDeviceInterfaceMK3` was
 `0x04` (should be `0x03` per the reference project, endpoint `0x04` was already
