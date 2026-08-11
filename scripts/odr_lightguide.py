@@ -109,7 +109,13 @@ class ODRClient:
             print(f"  {d.get('product')}  serial {d.get('serialnumber')}  "
                   f"vendor {d.get('vendorID', 0):#06x}  product {d.get('productID', 0):#06x}")
         serial = devices[0]["serialnumber"]
-        self.request(METHOD_CONNECT_DEVICE, [self.uuid, serial])
+        reply = self.request(METHOD_CONNECT_DEVICE, [self.uuid, serial])
+        # A reply is [1, msgid, error, result]; a refusal (unknown method, unknown
+        # serial) carries a message in the error slot instead of leaving it None. Seen
+        # in the wild as "Method not registered" when a service update renumbers this
+        # method, checked rather than assumed so that doesn't look like success.
+        if not isinstance(reply, list) or len(reply) < 3 or reply[2] is not None:
+            raise RuntimeError(f"service refused connect_device: {reply}")
         # Lighting is ignored unless the client has asked for focus first.
         self.notify(METHOD_REQUEST_FOCUS, [self.uuid, serial])
         time.sleep(0.3)
