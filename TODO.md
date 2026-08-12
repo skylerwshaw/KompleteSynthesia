@@ -180,10 +180,12 @@ this at all, would be a from-scratch effort.
 Everything MK3 here has been developed and verified against exactly one keyboard, an S88
 MK3. Two gaps need hardware nobody working on this has:
 
-- **S49 MK3 is unsupported.** Its product ID is a guess (`kPID_S49MK3 = 0x2100` in
-  `USBController.h`) and it is missing from `HIDController.m`'s device table entirely, so
-  the app will not recognise one whatever the lighting path. One confirmed product ID
-  unblocks it.
+- **S49 MK3 is unsupported.** Its product ID (`kPID_S49MK3 = 0x2100` in `USBController.h`)
+  is confirmed, not a guess, tillt pulled it straight out of the firmware image via static
+  analysis (discussion #29, comment 9458947), but it is still missing from
+  `HIDController.m`'s device table entirely, so the app will not recognise one whatever the
+  lighting path. Nobody has actually run this app, or `scripts/odr_lightguide.py`, against
+  real S49 MK3 hardware yet, that's the one report still needed.
 - **S61 MK3 confirmed working, by @Bounga (issue #18, comment 5208383973).** Product ID
   `0x2110`, in the table already. Phase 1 lit every key, phase 2 spanned the full 61-key
   range (MIDI 36..96) with no offset, this was on Hardware Connection Service 2.0.7,
