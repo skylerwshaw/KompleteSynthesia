@@ -15,9 +15,12 @@ runs on models the app itself cannot yet recognise. See TODO.md.
 Requires msgpack (pip install msgpack) and NIHardwareConnectionService running.
 """
 
+import os
 import socket
 import struct
 import sys
+import tempfile
+import threading
 import time
 import uuid as uuidlib
 
@@ -32,6 +35,18 @@ METHOD_LIGHTGUIDE = 360
 FIELD_LEDS = 239
 
 PROTOCOL_VERSION = "2.1.0"
+
+
+def check_reply_accepted(reply, method_name):
+    """Raise if a request reply ([1, msgid, error, result]) carries a refusal.
+
+    A service that has renumbered its methods (observed in the wild as
+    "Method not registered" after a Hardware Connection Service update, see
+    issue #18) refuses instead of erroring out the connection, so this has to be
+    checked rather than assumed.
+    """
+    if not isinstance(reply, list) or len(reply) < 3 or reply[2] is not None:
+        raise RuntimeError(f"service refused {method_name}: {reply}")
 
 # Colour byte: palette index in the high six bits, intensity in the low two. Same
 # encoding the legacy HID path uses, see kKompleteKontrolColor* in HIDController.h.
@@ -110,12 +125,7 @@ class ODRClient:
                   f"vendor {d.get('vendorID', 0):#06x}  product {d.get('productID', 0):#06x}")
         serial = devices[0]["serialnumber"]
         reply = self.request(METHOD_CONNECT_DEVICE, [self.uuid, serial])
-        # A reply is [1, msgid, error, result]; a refusal (unknown method, unknown
-        # serial) carries a message in the error slot instead of leaving it None. Seen
-        # in the wild as "Method not registered" when a service update renumbers this
-        # method, checked rather than assumed so that doesn't look like success.
-        if not isinstance(reply, list) or len(reply) < 3 or reply[2] is not None:
-            raise RuntimeError(f"service refused connect_device: {reply}")
+        check_reply_accepted(reply, "connect_device")
         # Lighting is ignored unless the client has asked for focus first.
         self.notify(METHOD_REQUEST_FOCUS, [self.uuid, serial])
         time.sleep(0.3)
@@ -153,7 +163,62 @@ def selftest():
     leds = [[n, BLUE] for n in range(LED_COUNT)]
     assert len(leds) == 128 and leds[-1][0] == 127, "LED array must cover MIDI 0..127"
     assert BLUE | 3 != BLUE, "intensity lives in the low two bits"
-    print("selftest passed: hello matches the captured bytes, LED array well formed")
+
+    # A real refusal, captured by @Bounga against Hardware Connection Service 2.1.5
+    # after it renumbered connect_device out from under this script (issue #18,
+    # comment 5208665711), not a synthetic guess at the reply shape.
+    refused = [1, 2, "Method not registered: {}", None]
+    try:
+        check_reply_accepted(refused, "connect_device")
+        raise AssertionError("check_reply_accepted let a real captured refusal through")
+    except RuntimeError:
+        pass
+    check_reply_accepted([1, 2, None, True], "connect_device")  # must not raise
+
+    check_refusal_surfaces_through_a_real_socket()
+
+    print("selftest passed: hello matches the captured bytes, LED array well formed, "
+          "refusal check catches Bounga's captured 2.1.5 refusal, including end-to-end "
+          "through a real socket")
+
+
+def _serve_mock_refusal(sock_path, ready):
+    """One-shot fake service: a hello with one fake device, then Bounga's captured
+    connect_device refusal verbatim. Enough to drive ODRClient.connect_device() through
+    its real send/recv/framing code, not just the parsing function in isolation."""
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(sock_path)
+    server.listen(1)
+    ready.set()
+    conn, _ = server.accept()
+    conn.settimeout(3.0)
+    conn.recv(16)  # the raw UUID preamble, sent ahead of the framing
+    conn.recv(4096)  # the hello request; contents unused, order is all that matters here
+    conn.sendall(frame([1, 1, None, {
+        "available_devices": [{"product": "MOCK S88 MK3", "serialnumber": "MOCK",
+                                "vendorID": 0x17cc, "productID": 0x2120}],
+        "agent_version": "2.1.5",
+    }]))
+    conn.recv(4096)  # the connect_device request
+    conn.sendall(frame([1, 2, "Method not registered: {}", None]))
+    conn.close()
+    server.close()
+
+
+def check_refusal_surfaces_through_a_real_socket():
+    with tempfile.TemporaryDirectory() as d:
+        sock_path = os.path.join(d, "mock.sock")
+        ready = threading.Event()
+        server = threading.Thread(target=_serve_mock_refusal, args=(sock_path, ready), daemon=True)
+        server.start()
+        ready.wait(timeout=3.0)
+        try:
+            ODRClient(path=sock_path).connect_device()
+        except RuntimeError as e:
+            assert "Method not registered" in str(e), f"wrong error surfaced: {e}"
+        else:
+            raise AssertionError("connect_device did not raise against a mocked refusal")
+        server.join(timeout=3.0)
 
 
 def main():
