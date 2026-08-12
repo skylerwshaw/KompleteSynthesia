@@ -175,6 +175,53 @@ hardware, and `AppDelegate.m` hard-gates `VideoController` instantiation to
 `mk == 2` only, so MK3 never reaches it today. No community prior art exists for
 this at all, would be a from-scratch effort.
 
+## Feature disparity (MK1/MK2 vs MK3)
+
+Everything here is either a live regression from what MK1/MK2 already do, or a new door
+MK3 opens that neither generation has today. Where a gap already has its own section
+above with more detail, this points there instead of repeating it.
+
+### MK1/MK2 has it, MK3 doesn't
+
+- **Screen mirroring.** See "Display/screen mirroring for MK3" above, not started at all.
+- **All button LED feedback, including the default lighting MK3 shows on boot.**
+  `HIDController.m`'s `updateButtonLightMap:` is a no-op for MK3 (`// FIXME: We dont know
+  yet how to specifically update the button lighting.`), and the momentary flash-on-press
+  feedback is only ever invoked from the MK1/2 HID report handler, structurally
+  unreachable for MK3. This is why the default lighting never comes back once a key is
+  lit, see "MK3: default button/strip/ring lighting goes out permanently" above.
+- **Setup, Clear, Scene, Function1-5, and Plugin buttons are completely unreachable on
+  MK3**, not merely no-op, no CC is mapped to them at all in
+  `MIDI2HIDController.m`'s `receivedMK3ControlSurfaceCC:`. On MK1/2 these open
+  Preferences, reset the app, bootstrap Synthesia, toggle screen mirroring, and fire
+  Escape/F2/F3/F4 shortcuts, respectively. Related to, but broader than, "Button 1-8
+  above the display" above.
+- **The volume knob (Knob1).** MK1/2 have a dedicated physical volume knob bound to
+  system volume and the on-screen OSD. MK3's Knob1 is just the leftmost of 8 generic,
+  context-dependent soft knobs, deliberately left unmapped in `MIDI2HIDController.m`
+  rather than repurposed, turning it does nothing.
+- **Ten more CCs decoded and routed but dispatched to nothing**: Record, Stop, Loop,
+  Metro, Tap Tempo, Undo/Redo, Quantize, Automation, Preset Up/Down, Knobs 2-8. See
+  "Knob/button IDs that are recognized but dispatch to nothing" above for the CC table.
+
+### Different mechanism, not a gap
+
+Key lighting (ODR socket vs. direct HID write), button/jogwheel/knob input (NIHIA MIDI
+port vs. vendor HID), jogwheel scroll, and jog-tilt decoding are all functionally present
+on MK3, just wired differently than MK1/2. Not tracked as gaps.
+
+### New potential functionality (neither generation has this today)
+
+- **DAW-mode SysEx track sync** (`SYSEX_TRACK_AVAILABLE`/`SYSEX_TRACK_NAME` etc., per
+  `DrivenByMoss`'s `KontrolProtocolControlSurface.java`). Appears to be what gates
+  Buttons 1-8 above the display and the Browser/Plug-in/Setup modes, per "Button 1-8
+  above the display" above, genuinely new work, not present on MK1/2 either.
+- **Driving button/ring/strip lighting ourselves**, via `updateButtonLightMap:`
+  (currently a stub for MK3) or the lightguide buffer's unused tail bytes, instead of
+  relying on the device's own default lighting.
+- **MK3's larger screen** (1280x480, one panel), bigger than anything this app has
+  driven before (MK2 is two 480x272 panels), once mirroring is wired up at all.
+
 ## Wanted: an S49 MK3 owner, and anyone with an S61 MK3
 
 Everything MK3 here has been developed and verified against exactly one keyboard, an S88
