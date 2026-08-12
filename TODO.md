@@ -75,6 +75,50 @@ Also found and fixed in passing: `USBController.m`'s `kUSBDeviceInterfaceMK3` wa
 correct); never caught before because `VideoController`, the only prior caller of
 `bulkWriteData:`, is `mk == 2`-only, so this path had never run on real MK3 hardware.
 
+**Diagnosing ODR lighting: quit Komplete Kontrol first, every time.** The service
+gives focus to one client at a time, and Komplete Kontrol running in the background
+(easy to forget, no window needed, and it silently reconnects on its own) is
+indistinguishable from this app's own lighting at a glance: its idle/browse-state
+colours and its LCD content are both still live on the device either way. Confirmed
+this cost real time during the 2.1.5 method-ID re-capture below, a lit-but-wrong
+board and an LCD showing instrument info both turned out to be Komplete Kontrol still
+running, not a bug in the app under test. `ps aux | grep -i "Komplete Kontrol"` is the
+reliable check; the on-screen dock/window state is not.
+
+**2026-08-12: the "worth revisiting" method-ID drift above actually happened, and is
+now fixed.** @Bounga reported lighting silently dead on his S61 after Native Access
+auto-updated Hardware Connection Service to 2.1.5 (R14): `connect_device` (`382`),
+`client_request_focus` (`373`) and `client_lightguide_set_leds` (`360`) all started
+returning `Method not registered` (issue #18, comment 5208665711). Reproduced locally
+by updating this machine's own service the same way and confirming the identical
+refusal on real hardware.
+
+Root cause: those numbers were never guaranteed stable, they're just each method's
+index into the service's `symbol_registry`, an array the hello reply already includes
+in full (several hundred names), and the registry itself gets reordered/changed between
+agent releases. The names are stable; the numbers derived from them are not. Re-captured
+the current names by relaying a real Komplete Kontrol session through
+`scripts/odr_relay_capture.py` (moves the service socket aside, binds the original path,
+logs both directions), `connect_device` is unchanged, but focus and lighting are now
+`client_request_focus` and `client_lightguide_set_leds`, and the LED array's field key
+changed from `239` to a differently-named `client_midi_addressing` (a guessed bare
+positional array got `Arguments cannot be parsed` from the service; the real traffic
+showed the actual dict-wrapped shape).
+
+**Fix, not a patch**: `ODRClient.m` and `odr_lightguide.py` now resolve all four
+method/field numbers from `symbol_registry` by name on every connection, instead of
+using hardcoded numbers, so this should not require a code change again next time the
+service renumbers things, only if it drops one of the names outright (which surfaces as
+a loud, specific error rather than silent no-op lighting). Verified end-to-end on real
+hardware against the drifted service: both the standalone script and the actual app
+(`ODR lighting active for <serial>` in the log, keys visibly lighting on key press).
+
+Also found and fixed in passing while chasing this: `ODRClient.m`'s `awaitReply` kept
+only the *last* `recv()` chunk of a multi-chunk reply (`setData:` instead of
+`appendData:`), harmless while nothing read past a reply's last 2 bytes, but silently
+truncating the hello reply's `symbol_registry`, which sits at the end of a ~10KB body,
+the moment something needed to read it.
+
 ## MK3: default button/strip/ring lighting goes out permanently on first key press
 
 On boot, the S88 MK3 shows its own default lighting (buttons, jogwheel ring, touch
@@ -140,9 +184,11 @@ MK3. Two gaps need hardware nobody working on this has:
   `USBController.h`) and it is missing from `HIDController.m`'s device table entirely, so
   the app will not recognise one whatever the lighting path. One confirmed product ID
   unblocks it.
-- **S61 MK3 is untested.** Its product ID is confirmed (thanks to @Bounga) and it is in the
-  table, so it *should* work (the ODR lighting path differs only by the starting note),
-  but nobody has run it.
+- **S61 MK3 confirmed working, by @Bounga (issue #18, comment 5208383973).** Product ID
+  `0x2110`, in the table already. Phase 1 lit every key, phase 2 spanned the full 61-key
+  range (MIDI 36..96) with no offset, this was on Hardware Connection Service 2.0.7,
+  before the method-ID drift above; unaffected now that the fix resolves names instead
+  of numbers, but worth a re-confirm from an S61 owner if anyone doubts that.
 
 Neither is a code problem waiting on a decision; both are waiting on one report from
 someone with the hardware.

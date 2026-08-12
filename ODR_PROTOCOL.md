@@ -33,22 +33,38 @@ There is no code-signature or entitlement check on the peer. Any local process c
 
 ## Method numbering
 
-`instance_hello` is sent as a string. After that both sides address methods as **integers**
-from the service's symbol registry, and structure fields are integers too (`{239: [...]}`
-rather than `{"leds": [...]}`). The numbers below are what an S88 MK3 on agent 2.0.7 (R15),
-IPC protocol 2.1.0, was observed using. They are not guaranteed stable across agent versions.
+`instance_hello` is sent as a string. After that both sides address methods as
+**integers**, and structure fields are integers too (`{267: [...]}` rather than
+`{"leds": [...]}`). **These numbers are not stable across agent releases**,
+confirmed: an S88/S61 MK3 on agent 2.0.7 (R15), IPC protocol 2.1.0, used
+`connect_device`/`client_request_focus`/`client_lightguide_set_leds` = `382`/`373`/`360`;
+on agent 2.1.5 (R14), protocol 2.2.0, those same three numbers all came back
+`"Method not registered"` (first spotted by @Bounga, issue #18 comment 5208665711, then
+reproduced here). Renumbering happens silently, nothing before this pointed at it.
 
-| Number | Meaning | Kind |
+What *is* stable is the name. The hello reply carries the service's entire
+`symbol_registry`: an array of every method and field name it knows, several hundred
+entries long. **A method's number is simply its index in that array.** Confirmed by
+resolving `connect_device`'s index this way against the 2.1.5 service and calling it:
+accepted, `[1, msgid, None, True]`, no hardcoded number involved. `ODRClient.m` and
+`odr_lightguide.py` both resolve method numbers from this registry on every connection
+now, not from baked-in numbers, see "Capturing more of it" below for how the current
+names were found, in case they drift again.
+
+| Name | Meaning | Kind |
 |---|---|---|
 | `"instance_hello"` | handshake, the only string-named method | request |
-| `382` | connect/attach to a device | request, replies `True` |
-| `373` | request focus | notification |
-| `360` | set key LEDs | notification |
-| `239` | the LED array field inside `360` | field |
-| `345`, `348`, `350` | device attached / settings changed / focus granted | notifications from the service |
+| `connect_device` | connect/attach to a device | request, replies `True` |
+| `client_request_focus` | request focus | notification |
+| `client_lightguide_set_leds` | set key LEDs | notification |
+| `client_midi_addressing` | the LED array field inside `client_lightguide_set_leds`'s params | field |
 
-Calling `360` as a request rather than a notification returns
-`Method not registered: {}`, handlers are registered per message kind.
+Calling a notification-only method as a request instead returns
+`Method not registered: {}`, handlers are registered per message kind. A malformed
+argument shape for a real method returns `Arguments cannot be parsed: [...]` instead,
+this is how the `client_midi_addressing` field name was found: a plausible-looking
+guess (a bare positional array) got that error; real Komplete Kontrol traffic showed
+the actual shape.
 
 ## Bringing up a session
 
@@ -56,10 +72,12 @@ Calling `360` as a request rather than a notification returns
 c->s  <16 raw UUID bytes>
 c->s  [0, 0, "instance_hello", [uuid, {client_info: {name, version, type: "standalone"},
                                        ipc_protocol_version: "2.1.0"}]]
-s->c  [1, 0, None, {agent_version, ipc_protocol_version, available_devices: [...], ...}]
-c->s  [0, 1, 382, [uuid, serial]]        -> [1, 1, None, True]
-c->s  [2, 373, [uuid, serial]]           # focus
-c->s  [2, 360, [uuid, serial, {239: [[note, colour], ...]}]]
+s->c  [1, 0, None, {agent_version, ipc_protocol_version, available_devices: [...],
+                    symbol_registry: [...], ...}]
+      # resolve iConnect = symbol_registry.index("connect_device"), etc. from here
+c->s  [0, 1, iConnect, [uuid, serial]]   -> [1, 1, None, True]
+c->s  [2, iFocus, [uuid, serial]]        # focus
+c->s  [2, iLeds, [uuid, serial, {iAddr: [[note, colour], ...]}]]
 ```
 
 The hello reply enumerates devices with product name, serial, vendor and product ID, take
@@ -69,17 +87,18 @@ Attaching answers `[1, msgid, nil, true]`, and a serial the service does not rec
 `[1, msgid, nil, false]` rather than an error, worth checking, since carrying on from a
 refusal means every later LED message is accepted and ignored.
 
-**Focus is required.** Without the `373` notification the service accepts `360` silently and
-nothing on the keyboard changes. This was the second dead end: LED messages structurally
-identical to Komplete Kontrol's, ignored, while stale colours from the last real KK session
-stayed latched on the device and looked like our own output.
+**Focus is required.** Without the `client_request_focus` notification the service accepts
+`client_lightguide_set_leds` silently and nothing on the keyboard changes. This was the
+second dead end: LED messages structurally identical to Komplete Kontrol's, ignored, while
+stale colours from the last real KK session stayed latched on the device and looked like our
+own output.
 
 ## The LED array
 
-`{239: [[index, colour], ...]}` with **128 entries, indexed by MIDI note number**, not by
-physical key. An S88 occupies MIDI 21 (A0) through 108 (C8); smaller keyboards take a
-sub-range. Sending 88 entries as `0..87` lights A0 up to D#6 and leaves the top 21 keys
-dark, which is a convincing-looking wrong answer.
+`{client_midi_addressing: [[index, colour], ...]}` with **128 entries, indexed by MIDI note
+number**, not by physical key. An S88 occupies MIDI 21 (A0) through 108 (C8); smaller
+keyboards take a sub-range. Sending 88 entries as `0..87` lights A0 up to D#6 and leaves the
+top 21 keys dark, which is a convincing-looking wrong answer.
 
 Because the array is always the full MIDI range, it is the same message for every keyboard
 in the range, a 61-key S-series just occupies MIDI 36..96 and leaves the rest at zero.
@@ -95,7 +114,7 @@ in `HIDController.h`): palette index in the high six bits, intensity in the low 
 rather than brightening it, worth knowing, because a whole board set to `|3` looks
 exactly like a rejected message.
 
-Each `360` replaces the entire array; there is no per-key delta.
+Each `client_lightguide_set_leds` call replaces the entire array; there is no per-key delta.
 
 ## Why this matters
 
@@ -126,8 +145,13 @@ needs the USB interface it holds. An MK3 needs the opposite (the service alive),
 now spared when `+[HIDController mk3DeviceAttached]` says an MK3 is plugged in, and killed
 exactly as before otherwise.
 
-The cost is a hard dependency on `NIHardwareConnectionService` running, and on method
-numbers that may shift between agent releases.
+The cost is a hard dependency on `NIHardwareConnectionService` running. Method numbers
+shifting between agent releases (confirmed to actually happen, see "Method numbering"
+above) no longer needs a code change to survive, since both clients resolve numbers from
+the hello reply's `symbol_registry` by name instead of hardcoding them. The one thing that
+would still break lighting is the service dropping one of the four names this app depends
+on outright, which would surface as a loud, specific error (`ODRClient.m`'s
+`connectToDeviceWithSerial:` checks for exactly this) rather than a silent no-op.
 
 ## Capturing more of it
 
@@ -135,7 +159,11 @@ The service does report errors for malformed requests
 (`Arguments cannot be parsed: [...]`, `Method not registered: {}`), so replies are a usable
 oracle, but only for requests, not notifications, which covers most of the interesting
 surface. To learn a new message, watch Komplete Kontrol perform the action through a relay
-that moves the socket aside, binds the original path, and forwards to the real one.
+that moves the socket aside, binds the original path, and forwards to the real one:
+`scripts/odr_relay_capture.py` does exactly this and logs every decoded frame in both
+directions. This is how `client_midi_addressing` and the current method names were found
+after the 2.1.5 renumbering: the relay caught real Komplete Kontrol traffic loading an
+instrument, which is what actually resolved the ambiguity guessing couldn't.
 Remember the 16-byte preamble when parsing the client side.
 
 Beyond lighting, the same session carries the screens, mixer track data, browser model,

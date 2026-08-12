@@ -14,12 +14,27 @@
 static NSString* const kODRSocketPath = @"/Users/Shared/Native Instruments/com.native-instruments.odr_agent.kks";
 
 // `instance_hello` is the only method addressed by name. Everything after it uses integer
-// symbols from the service's registry, these are what agent 2.0.7 (R15) / IPC protocol
-// 2.1.0 was observed using, and they are not guaranteed stable across agent releases.
-static const uint32_t kODRMethodConnectDevice = 382;
-static const uint32_t kODRMethodRequestFocus = 373;
-static const uint32_t kODRMethodLightGuide = 360;
-static const uint32_t kODRFieldLeds = 239;
+// symbols, and those numbers are not fixed, confirmed drifting between agent releases
+// (issue #18, comment 5208665711: 382/373/360 all came back "Method not registered" on
+// agent 2.1.5 after working on 2.0.7). What is fixed is the *name*: the hello reply
+// includes the service's whole symbol_registry array, and a method's number is simply its
+// index in that array (confirmed against real Komplete Kontrol traffic through a relay;
+// see ODR_PROTOCOL.md). So these are names, resolved fresh every connection via
+// ODRFindSymbolRegistry below, not baked-in numbers that go stale again next agent update.
+static NSString* const kODRSymbolConnectDevice = @"connect_device";
+static NSString* const kODRSymbolRequestFocus = @"client_request_focus";
+static NSString* const kODRSymbolLightGuide = @"client_lightguide_set_leds";
+static NSString* const kODRSymbolMidiAddressing = @"client_midi_addressing";
+
+// Agent 2.0.7 (R15) / IPC protocol 2.1.0 (the generation this app was first confirmed
+// against) is not known to include a symbol_registry in its hello reply at all (nobody
+// needed one before the numbers moved). If a service's hello reply has no registry, these
+// are what that generation was confirmed using, kept as a fallback so an un-updated
+// service still lights the keyboard rather than being told the protocol doesn't work.
+static const uint32_t kODRLegacyMethodConnectDevice = 382;
+static const uint32_t kODRLegacyMethodRequestFocus = 373;
+static const uint32_t kODRLegacyMethodLightGuide = 360;
+static const uint32_t kODRLegacyFieldMidiAddressing = 239;
 
 static NSString* const kODRProtocolVersion = @"2.1.0";
 
@@ -88,6 +103,81 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     [d appendBytes:&v length:2];
 }
 
+// Finds "symbol_registry"'s value in a hello reply and decodes it as an array of strings,
+// the only structured data this app ever reads back, out of a reply that otherwise runs to
+// ten kilobytes of device/asset inventory it has no use for. A byte-pattern search for the
+// key plus a decoder scoped to exactly "array of strings" is a smaller, easier-to-trust diff
+// than a general msgpack decoder, and it is all this app needs: the key is always encoded as
+// fixstr (0xaf, "symbol_registry" is always exactly 15 bytes), so it cannot be confused with
+// anything except that literal string appearing inside binary asset data, which does not
+// happen in practice.
+static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
+{
+    static const uint8_t key[] = {0xaf, 's', 'y', 'm', 'b', 'o', 'l', '_',
+                                   'r', 'e', 'g', 'i', 's', 't', 'r', 'y'};
+    const uint8_t* bytes = reply.bytes;
+    NSUInteger length = reply.length;
+    if (length < sizeof(key)) {
+        return nil;
+    }
+
+    NSUInteger cursor = NSNotFound;
+    for (NSUInteger i = 0; i + sizeof(key) <= length; i++) {
+        if (memcmp(bytes + i, key, sizeof(key)) == 0) {
+            cursor = i + sizeof(key);
+            break;
+        }
+    }
+    if (cursor == NSNotFound || cursor >= length) {
+        return nil;
+    }
+
+    uint8_t arrayTag = bytes[cursor++];
+    NSUInteger count;
+    if ((arrayTag & 0xf0) == 0x90) {
+        count = arrayTag & 0x0f;
+    } else if (arrayTag == 0xdc) {
+        if (cursor + 2 > length) return nil;
+        count = ((NSUInteger)bytes[cursor] << 8) | bytes[cursor + 1];
+        cursor += 2;
+    } else if (arrayTag == 0xdd) {
+        if (cursor + 4 > length) return nil;
+        count = ((NSUInteger)bytes[cursor] << 24) | ((NSUInteger)bytes[cursor + 1] << 16) |
+                ((NSUInteger)bytes[cursor + 2] << 8) | bytes[cursor + 3];
+        cursor += 4;
+    } else {
+        return nil;
+    }
+
+    NSMutableArray<NSString*>* names = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger i = 0; i < count; i++) {
+        if (cursor >= length) return nil;
+        uint8_t strTag = bytes[cursor++];
+        NSUInteger strLen;
+        if ((strTag & 0xe0) == 0xa0) {
+            strLen = strTag & 0x1f;
+        } else if (strTag == 0xd9) {
+            if (cursor >= length) return nil;
+            strLen = bytes[cursor++];
+        } else if (strTag == 0xda) {
+            if (cursor + 2 > length) return nil;
+            strLen = ((NSUInteger)bytes[cursor] << 8) | bytes[cursor + 1];
+            cursor += 2;
+        } else {
+            return nil;  // registry entries are always names, an unexpected type means
+                          // this decoder found the wrong bytes, not a real registry.
+        }
+        if (cursor + strLen > length) return nil;
+        NSString* name = [[NSString alloc] initWithBytes:bytes + cursor
+                                                    length:strLen
+                                                  encoding:NSUTF8StringEncoding];
+        if (name == nil) return nil;
+        [names addObject:name];
+        cursor += strLen;
+    }
+    return names;
+}
+
 @implementation ODRClient {
     LogViewController* log;
 
@@ -95,6 +185,12 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     NSString* uuid;
     NSString* serial;
     uint32_t msgid;
+
+    // Resolved from the service's symbol_registry at connect time, see
+    // ODRFindSymbolRegistry and the kODRSymbol* names above. setKeyColors: needs these
+    // after connectToDeviceWithSerial: has returned, so they outlive that one call.
+    uint32_t lightGuideMethod;
+    uint32_t midiAddressingField;
 
     dispatch_source_t drain;
 }
@@ -184,19 +280,22 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     memcpy(&length, header, sizeof(length));
     uint32_t size = CFSwapInt32LittleToHost(length);
 
-    // The hello reply runs to ten kilobytes of device and asset inventory we have no use
-    // for; only the last handful of bytes ever gets looked at.
+    // The hello reply runs to ten kilobytes of device and asset inventory, most of which
+    // goes unused, but ODRFindSymbolRegistry needs the whole body: symbol_registry is
+    // the last key in it, so a reply that only kept the final recv() chunk (as this used
+    // to, back when replyWasAccepted:'s last-2-bytes check was the only reader) would
+    // usually cut it off mid-array. Every chunk has to be kept, not just the last one.
     uint8_t scratch[4096];
-    NSMutableData* tail = [NSMutableData data];
+    NSMutableData* body = [NSMutableData dataWithCapacity:size];
     while (size > 0) {
         ssize_t n = recv(sock, scratch, MIN(size, sizeof(scratch)), 0);
         if (n <= 0) {
             return nil;
         }
-        [tail setData:[NSData dataWithBytes:scratch length:n]];
+        [body appendBytes:scratch length:n];
         size -= n;
     }
-    return tail;
+    return body;
 }
 
 - (NSData*)requestWithMethod:(NSData*)method params:(NSData*)params
@@ -303,12 +402,41 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     if ([self sendMessage:[self requestWithMethod:method params:params]] == NO) {
         return [self failWithError:error message:@"handshake could not be sent"];
     }
-    if ([self awaitReply] == nil) {
+    NSData* helloReply = [self awaitReply];
+    if (helloReply == nil) {
         return [self failWithError:error message:@"no answer to the handshake"];
     }
 
+    uint32_t connectDeviceMethod;
+    uint32_t requestFocusMethod;
+    NSArray<NSString*>* registry = ODRFindSymbolRegistry(helloReply);
+    if (registry == nil) {
+        // No registry at all, an older agent, as far as is known (see the kODRLegacy*
+        // comment above). Not a failure: fall back to the numbers that generation was
+        // confirmed using, rather than refuse to light a keyboard whose service just
+        // predates having a registry to resolve names from.
+        [log logLine:@"ODR: hello reply has no symbol registry, using legacy method numbers"];
+        connectDeviceMethod = kODRLegacyMethodConnectDevice;
+        requestFocusMethod = kODRLegacyMethodRequestFocus;
+        lightGuideMethod = kODRLegacyMethodLightGuide;
+        midiAddressingField = kODRLegacyFieldMidiAddressing;
+    } else {
+        NSUInteger iConnect = [registry indexOfObject:kODRSymbolConnectDevice];
+        NSUInteger iFocus = [registry indexOfObject:kODRSymbolRequestFocus];
+        NSUInteger iLeds = [registry indexOfObject:kODRSymbolLightGuide];
+        NSUInteger iAddr = [registry indexOfObject:kODRSymbolMidiAddressing];
+        if (iConnect == NSNotFound || iFocus == NSNotFound || iLeds == NSNotFound || iAddr == NSNotFound) {
+            return [self failWithError:error
+                               message:@"service's symbol registry is missing a method this app needs"];
+        }
+        connectDeviceMethod = (uint32_t)iConnect;
+        requestFocusMethod = (uint32_t)iFocus;
+        lightGuideMethod = (uint32_t)iLeds;
+        midiAddressingField = (uint32_t)iAddr;
+    }
+
     NSMutableData* attachMethod = [NSMutableData data];
-    ODRAppendUInt(attachMethod, kODRMethodConnectDevice);
+    ODRAppendUInt(attachMethod, connectDeviceMethod);
 
     NSMutableData* attachParams = [NSMutableData data];
     ODRAppendArray(attachParams, 2);
@@ -322,8 +450,8 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     if (attachReply == nil) {
         return [self failWithError:error message:@"no answer when attaching to the keyboard"];
     }
-    // Checked rather than assumed: a refusal here (unknown serial, or a renumbered method
-    // in some future agent) would otherwise go unnoticed until the keys quietly stayed
+    // Checked rather than assumed: a refusal here (unknown serial, or a name missing from
+    // this agent's registry) would otherwise go unnoticed until the keys quietly stayed
     // dark, having already disabled the legacy path that would have lit them.
     if ([self replyWasAccepted:attachReply] == NO) {
         return [self failWithError:error
@@ -337,7 +465,7 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     ODRAppendArray(focusParams, 2);
     ODRAppendString(focusParams, uuid);
     ODRAppendString(focusParams, serial);
-    if ([self sendMessage:[self notificationWithMethod:kODRMethodRequestFocus params:focusParams]] == NO) {
+    if ([self sendMessage:[self notificationWithMethod:requestFocusMethod params:focusParams]] == NO) {
         return [self failWithError:error message:@"could not take focus"];
     }
 
@@ -411,10 +539,10 @@ static void ODRAppendArray(NSMutableData* d, NSUInteger count)
     ODRAppendString(params, uuid);
     ODRAppendString(params, serial);
     ODRAppendMap(params, 1);
-    ODRAppendUInt(params, kODRFieldLeds);
+    ODRAppendUInt(params, midiAddressingField);
     [params appendData:leds];
 
-    return [self sendMessage:[self notificationWithMethod:kODRMethodLightGuide params:params]];
+    return [self sendMessage:[self notificationWithMethod:lightGuideMethod params:params]];
 }
 
 @end

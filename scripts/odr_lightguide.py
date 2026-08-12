@@ -29,10 +29,28 @@ import msgpack
 SOCKET_PATH = "/Users/Shared/Native Instruments/com.native-instruments.odr_agent.kks"
 
 METHOD_HELLO = "instance_hello"
-METHOD_CONNECT_DEVICE = 382
-METHOD_REQUEST_FOCUS = 373
-METHOD_LIGHTGUIDE = 360
-FIELD_LEDS = 239
+
+# Everything past the hello is addressed by integer, and those numbers drift between
+# agent releases; confirmed in the wild (issue #18, comment 5208665711): these three
+# all came back "Method not registered" after an update, having worked before it.
+# What's stable is the *name*: the hello reply carries the service's whole
+# symbol_registry array, and a method's number is just its index in that array
+# (confirmed against real Komplete Kontrol traffic via a relay; see ODR_PROTOCOL.md).
+# So these are names, resolved fresh in connect_device() every run, not numbers that
+# go stale again next update.
+SYMBOL_CONNECT_DEVICE = "connect_device"
+SYMBOL_REQUEST_FOCUS = "client_request_focus"
+SYMBOL_LIGHTGUIDE = "client_lightguide_set_leds"
+SYMBOL_MIDI_ADDRESSING = "client_midi_addressing"
+
+# Agent 2.0.7 (R15) / IPC protocol 2.1.0 is not known to include a symbol_registry in its
+# hello reply at all (nobody needed one before the numbers moved). If a reply has no
+# registry, these are what that generation was confirmed using, kept as a fallback so
+# an un-updated service still lights the keyboard instead of being told it can't.
+LEGACY_METHOD_CONNECT_DEVICE = 382
+LEGACY_METHOD_REQUEST_FOCUS = 373
+LEGACY_METHOD_LIGHTGUIDE = 360
+LEGACY_FIELD_MIDI_ADDRESSING = 239
 
 PROTOCOL_VERSION = "2.1.0"
 
@@ -58,10 +76,38 @@ OFF, RED, ORANGE, YELLOW, GREEN, BLUE, PURPLE, PINK, WHITE = (
 # A0..C8; smaller keyboards occupy a sub-range and ignore the rest.
 LED_COUNT = 128
 
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def note_name(n):
+    """Scientific pitch notation, e.g. 60 -> 'C4' (middle C), the same convention
+    TODO.md already asks testers to report in."""
+    return f"{_NOTE_NAMES[n % 12]}{n // 12 - 1}"
+
 
 def frame(obj):
     body = msgpack.packb(obj, use_bin_type=True)
     return struct.pack("<I", len(body)) + body
+
+
+def recv_frame(conn):
+    """Reads one length-prefixed frame and decodes its body. The mock servers'
+    counterpart to ODRClient.recv(), needed because a bare conn.recv() includes the
+    4-byte length prefix, which msgpack.unpackb chokes on ('received extra data')."""
+    header = b""
+    while len(header) < 4:
+        chunk = conn.recv(4 - len(header))
+        if not chunk:
+            return None
+        header += chunk
+    size = struct.unpack("<I", header)[0]
+    body = b""
+    while len(body) < size:
+        chunk = conn.recv(size - len(body))
+        if not chunk:
+            return None
+        body += chunk
+    return msgpack.unpackb(body, raw=False, strict_map_key=False)
 
 
 class ODRClient:
@@ -123,19 +169,41 @@ class ODRClient:
         for d in devices:
             print(f"  {d.get('product')}  serial {d.get('serialnumber')}  "
                   f"vendor {d.get('vendorID', 0):#06x}  product {d.get('productID', 0):#06x}")
+        registry = reply[3].get("symbol_registry")
+        if isinstance(registry, list):
+            def resolve(name):
+                try:
+                    return registry.index(name)
+                except ValueError:
+                    raise RuntimeError(f"service's symbol registry has no {name!r}") from None
+
+            connect_device_method = resolve(SYMBOL_CONNECT_DEVICE)
+            request_focus_method = resolve(SYMBOL_REQUEST_FOCUS)
+            self.leds_method = resolve(SYMBOL_LIGHTGUIDE)
+            self.addr_field = resolve(SYMBOL_MIDI_ADDRESSING)
+        else:
+            # No registry at all, an older agent as far as is known (see the
+            # LEGACY_* comment above). Not an error: fall back to the numbers that
+            # generation was confirmed using.
+            print("no symbol registry in hello reply, using legacy method numbers")
+            connect_device_method = LEGACY_METHOD_CONNECT_DEVICE
+            request_focus_method = LEGACY_METHOD_REQUEST_FOCUS
+            self.leds_method = LEGACY_METHOD_LIGHTGUIDE
+            self.addr_field = LEGACY_FIELD_MIDI_ADDRESSING
+
         serial = devices[0]["serialnumber"]
-        reply = self.request(METHOD_CONNECT_DEVICE, [self.uuid, serial])
+        reply = self.request(connect_device_method, [self.uuid, serial])
         check_reply_accepted(reply, "connect_device")
         # Lighting is ignored unless the client has asked for focus first.
-        self.notify(METHOD_REQUEST_FOCUS, [self.uuid, serial])
+        self.notify(request_focus_method, [self.uuid, serial])
         time.sleep(0.3)
         self.serial = serial
         return serial
 
     def set_leds(self, colour_for_note):
-        self.notify(METHOD_LIGHTGUIDE, [
+        self.notify(self.leds_method, [
             self.uuid, self.serial,
-            {FIELD_LEDS: [[n, colour_for_note(n)] for n in range(LED_COUNT)]},
+            {self.addr_field: [[n, colour_for_note(n)] for n in range(LED_COUNT)]},
         ])
 
 
@@ -176,10 +244,11 @@ def selftest():
     check_reply_accepted([1, 2, None, True], "connect_device")  # must not raise
 
     check_refusal_surfaces_through_a_real_socket()
+    check_legacy_fallback_through_a_real_socket()
 
     print("selftest passed: hello matches the captured bytes, LED array well formed, "
-          "refusal check catches Bounga's captured 2.1.5 refusal, including end-to-end "
-          "through a real socket")
+          "refusal check catches Bounga's captured 2.1.5 refusal, legacy fallback works "
+          "when there's no registry, all end-to-end through a real socket")
 
 
 def _serve_mock_refusal(sock_path, ready):
@@ -198,6 +267,10 @@ def _serve_mock_refusal(sock_path, ready):
         "available_devices": [{"product": "MOCK S88 MK3", "serialnumber": "MOCK",
                                 "vendorID": 0x17cc, "productID": 0x2120}],
         "agent_version": "2.1.5",
+        # Order doesn't matter for resolve() (it searches by name), only presence.
+        # Unlike the real registry, this is nowhere near 437 entries, on purpose.
+        "symbol_registry": [SYMBOL_CONNECT_DEVICE, SYMBOL_REQUEST_FOCUS,
+                             SYMBOL_LIGHTGUIDE, SYMBOL_MIDI_ADDRESSING],
     }]))
     conn.recv(4096)  # the connect_device request
     conn.sendall(frame([1, 2, "Method not registered: {}", None]))
@@ -221,6 +294,56 @@ def check_refusal_surfaces_through_a_real_socket():
         server.join(timeout=3.0)
 
 
+def _serve_mock_legacy(sock_path, ready, errors):
+    """One-shot fake service shaped like agent 2.0.7 (R15): a hello reply with no
+    symbol_registry at all, then accepts connect_device addressed by the legacy number
+    and a lightguide notify with the legacy field key. Runs in a background thread, so
+    failures are appended to `errors` rather than raised: an exception here would only
+    print a traceback and be silently swallowed, not fail the test."""
+    try:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(sock_path)
+        server.listen(1)
+        ready.set()
+        conn, _ = server.accept()
+        conn.settimeout(3.0)
+        conn.recv(16)
+        conn.recv(4096)  # hello request
+        conn.sendall(frame([1, 1, None, {
+            "available_devices": [{"product": "MOCK S88 MK3", "serialnumber": "MOCK",
+                                    "vendorID": 0x17cc, "productID": 0x2120}],
+            "agent_version": "2.0.7",
+            # deliberately no "symbol_registry" key
+        }]))
+        request = recv_frame(conn)  # connect_device request, must use the legacy number
+        if request[2] != LEGACY_METHOD_CONNECT_DEVICE:
+            errors.append("client did not use the legacy method number for connect_device")
+        conn.sendall(frame([1, 2, None, True]))
+        recv_frame(conn)  # focus notify
+        _, method, params = recv_frame(conn)  # lightguide notify, must use the legacy field key
+        if method != LEGACY_METHOD_LIGHTGUIDE or LEGACY_FIELD_MIDI_ADDRESSING not in params[2]:
+            errors.append(f"client did not use legacy lightguide method/field: {method}, {params[2].keys()}")
+        conn.close()
+        server.close()
+    except Exception as e:  # noqa: BLE001 (report, don't silently swallow)
+        errors.append(f"mock service raised: {e!r}")
+
+
+def check_legacy_fallback_through_a_real_socket():
+    with tempfile.TemporaryDirectory() as d:
+        sock_path = os.path.join(d, "mock.sock")
+        ready = threading.Event()
+        errors = []
+        server = threading.Thread(target=_serve_mock_legacy, args=(sock_path, ready, errors), daemon=True)
+        server.start()
+        ready.wait(timeout=3.0)
+        client = ODRClient(path=sock_path)
+        client.connect_device()
+        client.set_leds(lambda n: 0)
+        server.join(timeout=3.0)
+        assert not errors, "; ".join(errors)
+
+
 def main():
     if "--selftest" in sys.argv:
         selftest()
@@ -230,12 +353,16 @@ def main():
     client.connect_device()
 
     # Every phase addresses all 128 MIDI notes, so this makes no assumption about which
-    # keyboard is attached, the device simply lights whichever of them it has.
-    print("\n1. whole keyboard blue for 5s, every key should light")
-    client.set_leds(lambda n: BLUE)
+    # keyboard is attached; the device simply lights whichever of them it has. GREEN,
+    # not BLUE: the S88 MK3's own default/idle lighting is already blue-ish, which made
+    # phase 1 hard to distinguish from "did nothing."
+    print("\n1. whole keyboard green for 5s, every key should light")
+    client.set_leds(lambda n: GREEN)
     time.sleep(5)
 
-    print("2. C notes only, red, for 10s, note the lowest and highest key that lights")
+    c_notes = [n for n in range(LED_COUNT) if n % 12 == 0]
+    print(f"2. red on {', '.join(note_name(n) for n in c_notes)} for 10s: "
+          f"check those specific keys light, and only those")
     client.set_leds(lambda n: RED if n % 12 == 0 else OFF)
     time.sleep(10)
 
