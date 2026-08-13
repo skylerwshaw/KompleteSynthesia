@@ -1,6 +1,6 @@
 # MK3 flowing-video research
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 ## Goal and current boundary
 
@@ -291,8 +291,19 @@ Remaining questions before this can represent Synthesia's falling notes:
   richer widget, so this doesn't reveal a new primitive beyond what's already proven, but
   it does confirm continuous background streaming to a page the user isn't looking at is
   normal, intended behavior, not a misuse of the protocol.
-- Measure how much of the 1280x480 display a layout can address; the eight-knob capture
-  used a single NKS1 row, not the full panel. This is the main open question now.
+- ~~Measure how much of the 1280x480 display a layout can address~~ Closed by static
+  binary analysis (2026-08-12, see avenue 4 below): `parameter_page_model` holds a
+  compile-time `std::array<parameter_info, 8>`, eight is a hard structural ceiling, not a
+  soft limit worth probing further from the client side.
+- The same static pass surfaced one untested lead: `client_mixer_set_meters`, a
+  structurally separate per-track meter RPC never captured because Mixer view was never
+  opened. Turns out this is gated on DAW mode with a real connected DAW session (Ableton,
+  Logic, Cubase, etc.), the same NIHIA track-sync layer "Button 1-8 above the display" in
+  `TODO.md` already found gated the same way; it's unreachable from Komplete Kontrol
+  standalone, which is everything tested tonight. Deprioritized, not closed: even a best
+  case here is still an animated bar/level widget, the same ceiling as knobs, just a
+  different shape and possibly a different count, not a step toward a canvas. Worth
+  revisiting only if a DAW session is set up for other reasons anyway.
 
 ### Result — first check was on the wrong page; a real instrument does animate a device-native widget (2026-08-12)
 
@@ -322,14 +333,8 @@ instrument does drive continuous device-native knob animation on MK3 hardware, u
 same mechanism already proven here, real-world precedent that this is a supported,
 intended use of the protocol rather than something being pushed past its design. It does
 not prove a richer widget type exists (Hypha's animation is still two ordinary knobs, X
-and Y, not a drawn curve or scope trace), so the open question from "Next work" about how
-much of the 1280x480 panel a layout can address stands as before.
-- Measure how much of the 1280x480 display a layout can address; the eight-knob capture
-  used a single NKS1 row, not the full panel.
-- If fixed layouts cannot place enough independent objects to represent falling notes at
-  useful density, close this avenue for full Synthesia rendering, but a reduced
-  representation (e.g. one bar/knob per near-term note) may still be worth scoping as its
-  own smaller feature.
+and Y, not a drawn curve or scope trace). The panel-coverage question this once left open
+is closed by the static analysis in avenue 4 below (hard 8-slot structural cap).
 
 The first guarded probe is prepared in `odr_display_probe.py native-ramp`. It reproduces
 the captured NKS1 parameter model with eight `continuous_parameter` knobs, no background
@@ -377,6 +382,43 @@ parameter at 30 Hz. It does not by itself prove enough independent objects exist
 represent falling notes, that remains open, see "Next work" below.
 
 ## 4. Analyze firmware and Hardware Connection Service renderer internals
+
+### Result — static binary analysis of NIHardwareConnectionService 2.1.5.14 (2026-08-12)
+
+Read-only: `nm -C` on the installed (unmodified) service binary's arm64 slice, no device
+access, no firmware extraction or modification. The binary is not fully stripped; NI's own
+C++ classes are namespaced under `ni::odr::*` with demangled symbol names, and every
+msgpack field name is compiled in as a `boost::hana::string<(char)N,...>` character-code
+literal, decodable straight from the symbol table into the full field vocabulary (374
+distinct names) without needing a live capture at all.
+
+Two results:
+
+- **The 8-knob cap is structural, not configurable.** `ni::odr::models::parameter_page_model`
+  holds its parameters in a compile-time `std::array<parameter_info, 8>`. This closes
+  avenue 3's remaining open question (how much of the panel a layout can address) with
+  certainty: no client-side trick reaches more than 8 simultaneous parameter/knob widgets
+  per page, it is fixed in the binary, not a limit anyone chose per-instrument.
+- **An untested rendering path exists: mixer meters.** `client_mixer_set_meters` /
+  `client_instance_mixer_set_meters` is a real RPC method with its own change notification
+  (`ni::odr::protocol::host_model_observers::mixer_viewmodel_observer::meter_changed`),
+  tied to per-track mixer data (`ni::odr::models::mixer_viewmodel`), structurally separate
+  from the 8-slot parameter array. Never captured because Mixer view was never opened
+  during any session so far. Presumably a level-meter/bar render rather than a knob dial,
+  and keyed per-track rather than a fixed array, so it may have a different object-count
+  ceiling than 8, unconfirmed. This is the one concrete unexplored lead this pass found.
+
+Decoded field names ruled out a framebuffer/canvas/bitmap-push primitive existing anywhere
+in this binary: no `pixel`, `bitmap`, `canvas`, `blit`, `texture`, `surface`, `render`,
+`draw`, or `gfx`-prefixed symbol of any kind. `waveform_parameter_style`, promising by
+name, decodes to fields `image` + `name`, the same icon-picker shape as
+`menu_parameter_style`/`discrete_parameter`, not a live scope or sample-driven trace.
+
+This is a partial pass, not exhaustive: it covers `NIHardwareConnectionService`'s own
+symbol table, not the MK3's actual firmware image (not yet located/extracted) or a full
+disassembly of message handling logic (only symbol names were searched, not instruction
+bodies). The mixer-meters lead is the next concrete thing to check, live, before
+considering this avenue closed.
 
 ### Targets
 

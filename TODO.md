@@ -213,9 +213,17 @@ position continuously regardless of what's on screen, and it's just sent to a kn
 (Performance) the operator wasn't looking at. Navigating to the actual Morpher page
 confirmed it animates, real-world precedent for exactly the mechanism this project's own
 probe already uses. Doesn't reveal a richer widget type, still just knobs, so it narrows
-rather than proves whether enough independent objects exist to represent falling notes,
-see avenue 3's "Next work" in `MK3_VIDEO_RESEARCH.md`, which is now mostly "how much of
-the 1280x480 panel can knobs/objects tile across."
+rather than proves whether enough independent objects exist to represent falling notes.
+
+**2026-08-13: that panel-coverage question is closed.** Read-only static analysis of the
+installed `NIHardwareConnectionService` binary (`nm -C`, no device or firmware touched)
+found `parameter_page_model` holds its knobs in a compile-time `std::array<parameter_info,
+8>`, eight is a hard structural ceiling, not a config value any client-side trick reaches
+past. The same pass surfaced one unexplored, deprioritized lead, `client_mixer_set_meters`,
+a structurally separate per-track meter RPC, but it's gated on DAW mode with a real
+connected DAW session, unreachable from Komplete Kontrol standalone, and even a best case
+there is still an animated bar widget, not a step toward a canvas. Full details and the
+decoded-field-name method in `MK3_VIDEO_RESEARCH.md` avenue 4.
 
 - Capture and crop/scale the Synthesia view to 1280x212, encode WebP frames, and feed the
   ODR asset/background path at a conservative rate no higher than the verified 10 FPS.
