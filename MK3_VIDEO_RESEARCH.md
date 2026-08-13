@@ -420,6 +420,58 @@ disassembly of message handling logic (only symbol names were searched, not inst
 bodies). The mixer-meters lead is the next concrete thing to check, live, before
 considering this avenue closed.
 
+### Handoff briefing for firmware decompilation (2026-08-13)
+
+For a fresh agent picking up firmware-level work specifically (as opposed to more
+service-binary analysis, which the result above already covers):
+
+**Read first, in this order**: this section, then the rest of avenue 4 above (what's
+already been found in the service binary, so it isn't re-derived), then `TODO.md`'s
+"Display/screen mirroring for MK3" section, then `ODR_PROTOCOL.md` for how the socket
+protocol works. `MK3_COMPATIBILITY.md` gives overall project orientation if that's needed
+too. Do not start hardware or firmware work without reading `ask-before-hardware-tests`
+context (ask the operator explicitly before anything that touches the real device;
+firmware work is categorically higher-risk than anything done so far, all prior sessions'
+tests were reversible software RPC calls, flashing modified firmware is not reversible
+the same way, treat it as its own explicit decision, not a continuation).
+
+**What's already known, don't re-search for it**:
+- `NIHardwareConnectionService`'s binary location:
+  `/Library/Application Support/Native Instruments/Hardware/Hardware Connection
+  Service/NIHardwareConnectionService.app/Contents/MacOS/NIHardwareConnectionService`, a
+  24MB universal Mach-O (x86_64 + arm64), version 2.1.5.14 at time of writing, not fully
+  stripped.
+- The field-name decoding trick: every msgpack field name is compiled in as a
+  `boost::hana::string<(char)N,(char)N,...>` character-code literal. `nm -arch arm64 -C`
+  the binary, then regex-extract and decode those literals to recover the complete field
+  vocabulary (374 names found this way) without a live capture.
+- The relevant namespace is `ni::odr::*`: `models` (data types), `agent` (device-facing
+  glue, includes `ni::odr::agent::kks::ipc_mediator` which dispatches all the
+  `handle_instance_*` RPCs), `protocol` (RPC/dispatch layer), `transport` (`usb`/`tcp`/
+  `uds` abstractions). `ni::odr::transport::usb` and the earlier-found
+  `usb_odr_interface::bulk_write_helper::write_to_bulkpipe` are the actual USB write path,
+  the natural place to look for how outgoing bytes get built if that's ever revisited.
+- **No firmware image exists anywhere on this machine.** Checked
+  `/Library/Application Support/Native Instruments`, `~/Library/Application Support/Native
+  Instruments`, `~/Library/Caches`, and Native Access's own storage, nothing. Native
+  Access (`/Applications/Native Access.app`) is the app that performs firmware updates but
+  doesn't appear to cache the image anywhere persistent. Obtaining an image is the actual
+  first open problem: whether that means capturing Native Access's download without
+  applying it (network capture during an update check, without confirming the flash step),
+  finding one hosted publicly, or something else, is undecided and needs its own plan
+  before touching real hardware. Note that even *checking* for a firmware update through
+  Native Access talks to the real device, treat that as a hardware-touching action
+  requiring the same operator confirmation as everything else, not a safe default.
+- Once an image exists: identify the actual MCU/SoC before reaching for Ghidra blindly,
+  the architecture determines the Ghidra language/processor module to load and whether
+  the image needs a base-address guess. No prior work in this project has identified the
+  MK3's display/main controller chip.
+
+**Hard boundary, repeated from earlier in this doc**: static analysis only until there's
+an explicit, separate decision to modify anything. No firmware writes, DFU/reboot
+commands, or persistent system changes are authorized by this research note. That
+decision, if it ever happens, is the operator's alone and deserves its own conversation.
+
 ### Targets
 
 Perform static analysis before considering any firmware modification. Search firmware
