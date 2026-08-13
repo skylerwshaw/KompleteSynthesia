@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""MITM relay + logger for the ODR msgpack-RPC socket.
+"""Safe MITM relay and structured logger for the MK3 ODR msgpack-RPC socket.
 
-For capturing what a real client (Komplete Kontrol) sends when the protocol drifts,
-see ODR_PROTOCOL.md's "Capturing more of it" section, which this implements. Moves the
-real service socket aside, binds our own listener at the original path, and forwards
-every byte in both directions while decoding and printing each msgpack-RPC frame. The
-original path is restored on exit (Ctrl-C, SIGTERM, or any other exit).
+Examples:
+    ./scripts/odr_relay_capture.py --output /tmp/odr.jsonl --blob-dir /tmp/odr-blobs
+    ./scripts/odr_relay_capture.py --marker "loaded instrument A"
+    ./scripts/odr_relay_capture.py --restore
 
-Usage:
-    1. Quit Komplete Kontrol and any other ODR client first: an already-open
-       connection bypasses the relay entirely, so it has to reconnect through it.
-    2. ./scripts/odr_relay_capture.py
-    3. Launch Komplete Kontrol (or any other client) and perform the action to
-       capture, e.g. let it light the keyboard, browse an instrument, etc.
-    4. Ctrl-C to stop; the original socket path is restored automatically.
+The relay moves the service socket aside only for the lifetime of the process and
+restores it on every normal exit. ``--restore`` repairs a stale relay left by an
+uncatchable crash, but refuses to interfere with a relay whose PID is still alive.
+Captured UUIDs and device serials are redacted by default. Binary values are logged by
+length and SHA-256 and, when --blob-dir is supplied, written once under that digest.
 """
 
+import argparse
+import base64
+import hashlib
+import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -29,24 +31,99 @@ import msgpack
 
 SOCKET_PATH = "/Users/Shared/Native Instruments/com.native-instruments.odr_agent.kks"
 REAL_PATH = SOCKET_PATH + ".real"
+PID_PATH = SOCKET_PATH + ".relay.pid"
+UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
-log_lock = threading.Lock()
+
+class Capture:
+    def __init__(self, output=None, blob_dir=None, redact=True, stream=None):
+        self.lock = threading.Lock()
+        self.started = time.monotonic()
+        self.output = open(output, "a", encoding="utf-8") if output else None
+        self.stream = stream or sys.stdout
+        self.blob_dir = blob_dir
+        self.redact = redact
+        self.identifiers = {}
+        if blob_dir:
+            os.makedirs(blob_dir, exist_ok=True)
+
+    def close(self):
+        if self.output:
+            self.output.close()
+
+    def remember(self, value, replacement):
+        if isinstance(value, str) and value:
+            self.identifiers[value] = replacement
+
+    def _clean(self, value, key=None):
+        if isinstance(value, bytes):
+            digest = hashlib.sha256(value).hexdigest()
+            if self.blob_dir:
+                path = os.path.join(self.blob_dir, digest + ".bin")
+                if not os.path.exists(path):
+                    with open(path, "wb") as f:
+                        f.write(value)
+            return {"$binary": {"length": len(value), "sha256": digest}}
+        if isinstance(value, list):
+            return [self._clean(v) for v in value]
+        if isinstance(value, dict):
+            result = {}
+            for k, v in value.items():
+                if self.redact and str(k) in ("serialnumber", "serial") and isinstance(v, str):
+                    self.remember(v, "<serial>")
+                result[str(k)] = self._clean(v, str(k))
+            return result
+        if self.redact and isinstance(value, str):
+            if UUID_RE.match(value):
+                self.remember(value, "<uuid>")
+            return self.identifiers.get(value, value)
+        return value
+
+    def event(self, conn, direction, kind, message=None, **extra):
+        record = {
+            "elapsed_ms": round((time.monotonic() - self.started) * 1000, 3),
+            "connection": conn,
+            "direction": direction,
+            "kind": kind,
+        }
+        if message is not None:
+            record["message"] = self._clean(message)
+        record.update(extra)
+        with self.lock:
+            if self.output:
+                self.output.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
+                self.output.flush()
+            summary = extra.get("method_name") or extra.get("detail") or kind
+            print(f"[{record['elapsed_ms']:10.3f} ms] #{conn} {direction}: {summary}", file=self.stream, flush=True)
 
 
-def log(direction, message):
-    with log_lock:
-        print(f"[{time.strftime('%H:%M:%S')}] {direction}: {message}", flush=True)
+class ConnectionState:
+    def __init__(self):
+        self.registry = None
+
+    def annotate(self, obj):
+        if isinstance(obj, list) and len(obj) >= 4 and obj[0] == 1 and isinstance(obj[3], dict):
+            registry = obj[3].get("symbol_registry")
+            if isinstance(registry, list):
+                self.registry = registry
+        method = None
+        if isinstance(obj, list) and len(obj) >= 3 and obj[0] in (0, 2):
+            method = obj[2] if obj[0] == 0 else obj[1]
+        if isinstance(method, int) and self.registry and 0 <= method < len(self.registry):
+            return method, self.registry[method]
+        return method, method if isinstance(method, str) else None
 
 
 class Direction:
-    """Decodes one side of a connection's traffic for logging, independent of the raw
-    forwarding, the bytes themselves are relayed unmodified regardless of whether
-    they decode cleanly."""
+    """Incrementally decode one direction without affecting byte forwarding."""
 
-    def __init__(self, name, expects_preamble):
+    def __init__(self, conn_id, name, expects_preamble, capture, state):
+        self.conn_id = conn_id
         self.name = name
         self.buf = bytearray()
         self.needs_preamble = expects_preamble
+        self.capture = capture
+        self.state = state
 
     def feed(self, data):
         self.buf += data
@@ -56,7 +133,9 @@ class Direction:
             identity = bytes(self.buf[:16])
             del self.buf[:16]
             self.needs_preamble = False
-            log(self.name, f"<preamble uuid={uuidlib.UUID(bytes=identity)}>")
+            uuid = str(uuidlib.UUID(bytes=identity))
+            self.capture.remember(uuid, "<uuid>")
+            self.capture.event(self.conn_id, self.name, "preamble", detail="uuid=<uuid>" if self.capture.redact else uuid)
         while len(self.buf) >= 4:
             size = struct.unpack("<I", self.buf[:4])[0]
             if len(self.buf) < 4 + size:
@@ -65,10 +144,14 @@ class Direction:
             del self.buf[:4 + size]
             try:
                 obj = msgpack.unpackb(body, raw=False, strict_map_key=False)
+                method, method_name = self.state.annotate(obj)
+                self.capture.event(self.conn_id, self.name, "frame", obj,
+                                   frame_length=size, method=method, method_name=method_name)
             except Exception as e:
-                log(self.name, f"<undecodable ({e}), {len(body)} bytes>: {body.hex()}")
-                continue
-            log(self.name, repr(obj))
+                digest = hashlib.sha256(body).hexdigest()
+                self.capture.event(self.conn_id, self.name, "undecodable",
+                                   detail=str(e), frame_length=size, sha256=digest,
+                                   prefix_base64=base64.b64encode(body[:48]).decode("ascii"))
 
 
 def pump(src, dst, direction):
@@ -90,64 +173,132 @@ def pump(src, dst, direction):
         pass
 
 
-def handle_client(client_sock, conn_id):
+def handle_client(client_sock, conn_id, capture):
     try:
         real_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         real_sock.connect(REAL_PATH)
     except OSError as e:
-        log(f"#{conn_id}", f"could not reach the real service: {e}")
+        capture.event(conn_id, "relay", "error", detail=f"cannot reach service: {e}")
         client_sock.close()
         return
-    c2s = Direction(f"#{conn_id} client->service", expects_preamble=True)
-    s2c = Direction(f"#{conn_id} service->client", expects_preamble=False)
-    t1 = threading.Thread(target=pump, args=(client_sock, real_sock, c2s), daemon=True)
-    t2 = threading.Thread(target=pump, args=(real_sock, client_sock, s2c), daemon=True)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    state = ConnectionState()
+    capture.event(conn_id, "relay", "opened")
+    c2s = Direction(conn_id, "client->service", True, capture, state)
+    s2c = Direction(conn_id, "service->client", False, capture, state)
+    threads = [
+        threading.Thread(target=pump, args=(client_sock, real_sock, c2s), daemon=True),
+        threading.Thread(target=pump, args=(real_sock, client_sock, s2c), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
     client_sock.close()
     real_sock.close()
-    log(f"#{conn_id}", "connection closed")
+    capture.event(conn_id, "relay", "closed")
 
 
-def main():
+def pid_is_alive(path=PID_PATH):
+    try:
+        with open(path, encoding="ascii") as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def restore_stale(socket_path=SOCKET_PATH, real_path=REAL_PATH, pid_path=PID_PATH):
+    if not os.path.exists(real_path):
+        return False, "no displaced service socket exists"
+    if pid_is_alive(pid_path):
+        return False, "relay process is still alive; stop it with Ctrl-C"
+    try:
+        if os.path.lexists(socket_path):
+            os.unlink(socket_path)
+        os.rename(real_path, socket_path)
+        try:
+            os.unlink(pid_path)
+        except OSError:
+            pass
+        return True, "restored the service socket"
+    except OSError as e:
+        return False, f"restore failed: {e}"
+
+
+def run_relay(args):
     if os.path.exists(REAL_PATH):
-        sys.exit(f"stale {REAL_PATH} from a previous run, remove it by hand and retry")
+        sys.exit(f"stale {REAL_PATH}; run this script with --restore")
     if not os.path.exists(SOCKET_PATH):
-        sys.exit(f"no service socket at {SOCKET_PATH}, is NIHardwareConnectionService running?")
-
+        sys.exit(f"no service socket at {SOCKET_PATH}; is NIHardwareConnectionService running?")
+    capture = Capture(args.output, args.blob_dir, not args.no_redact)
     os.rename(SOCKET_PATH, REAL_PATH)
+    with open(PID_PATH, "w", encoding="ascii") as f:
+        f.write(str(os.getpid()))
 
-    def restore(*_):
-        sys.exit(0)
+    def stop(*_):
+        raise KeyboardInterrupt
 
-    signal.signal(signal.SIGTERM, restore)
-    signal.signal(signal.SIGINT, restore)
-
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    listener = None
     try:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.bind(SOCKET_PATH)
         listener.listen(5)
-        print(f"relaying {SOCKET_PATH} -> {REAL_PATH}. Ctrl-C to stop.", flush=True)
-        conn_id = 0
         listener.settimeout(1.0)
+        capture.event(0, "relay", "started", detail=f"{SOCKET_PATH} -> {REAL_PATH}")
+        conn_id = 0
         while True:
             try:
                 client_sock, _ = listener.accept()
             except socket.timeout:
                 continue
             conn_id += 1
-            log(f"#{conn_id}", "connection opened")
-            threading.Thread(target=handle_client, args=(client_sock, conn_id), daemon=True).start()
+            threading.Thread(target=handle_client, args=(client_sock, conn_id, capture), daemon=True).start()
+    except KeyboardInterrupt:
+        pass
     finally:
-        try:
+        if listener:
+            listener.close()
+        if os.path.lexists(SOCKET_PATH):
             os.unlink(SOCKET_PATH)
+        if os.path.exists(REAL_PATH):
+            os.rename(REAL_PATH, SOCKET_PATH)
+        try:
+            os.unlink(PID_PATH)
         except OSError:
             pass
-        os.rename(REAL_PATH, SOCKET_PATH)
-        print("restored original socket path", flush=True)
+        capture.event(0, "relay", "restored", detail="original socket path restored")
+        capture.close()
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", help="append sanitized events as JSON Lines")
+    parser.add_argument("--blob-dir", help="write binary values by SHA-256")
+    parser.add_argument("--no-redact", action="store_true", help="retain UUIDs and serials")
+    parser.add_argument("--restore", action="store_true", help="restore a socket left by a crashed relay")
+    parser.add_argument("--marker", help="append one marker to --output without starting the relay")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if args.restore:
+        ok, message = restore_stale()
+        print(message)
+        return 0 if ok else 1
+    if args.marker:
+        if not args.output:
+            sys.exit("--marker requires --output")
+        capture = Capture(args.output, args.blob_dir, not args.no_redact)
+        capture.event(0, "operator", "marker", detail=args.marker)
+        capture.close()
+        return 0
+    run_relay(args)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

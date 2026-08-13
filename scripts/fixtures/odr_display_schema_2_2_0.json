@@ -1,0 +1,120 @@
+{
+  "agent_version_captured": "2.1.5",
+  "ipc_protocol_version_captured": "2.2.0",
+  "add_asset": {
+    "kind": "notification",
+    "method": "$symbol:add_asset",
+    "params": ["$asset_sha256", "$asset"]
+  },
+  "prepare": [
+    {
+      "kind": "notification",
+      "method": "$symbol:client_set_page",
+      "params": ["$uuid", "$serial", "$symbol:parameter"]
+    }
+  ],
+  "show_asset": {
+    "kind": "notification",
+    "method": "$symbol:client_parameter_page_set_data",
+    "params": [
+      "$uuid",
+      "$serial",
+      {
+        "$symbol:plugin_data": {
+          "$symbol:background": "$asset_sha256",
+          "$symbol:parameters": {},
+          "$symbol:nks_control_color": null,
+          "$symbol:plugin_color": null,
+          "$symbol:name": "KompleteSynthesia ODR Probe"
+        },
+        "$symbol:device_owned_viewstate": {
+          "$symbol:view_address": {"$symbol:nks1_view_address": 0},
+          "$symbol:force_host_viewstate": false
+        },
+        "$symbol:host_owned_viewstate": {
+          "$symbol:nks1_layout": [],
+          "$symbol:nks2_layout": null
+        }
+      }
+    ]
+  },
+  "show_asset_plugin_data": {
+    "kind": "notification",
+    "method": "$symbol:client_parameter_page_set_plugin_data",
+    "params": [
+      "$uuid",
+      "$serial",
+      {
+        "$symbol:background": "$asset_sha256",
+        "$symbol:parameters": {},
+        "$symbol:nks_control_color": null,
+        "$symbol:plugin_color": null,
+        "$symbol:name": "KompleteSynthesia ODR Probe"
+      }
+    ]
+  },
+  "prepare_browser": [
+    {
+      "kind": "notification",
+      "method": "$symbol:client_set_page",
+      "params": ["$uuid", "$serial", "$symbol:browser"]
+    }
+  ],
+  "show_browser_asset": {
+    "kind": "notification",
+    "method": "$symbol:client_browser_set_sounds",
+    "params": [
+      "$uuid",
+      "$serial",
+      {
+        "$symbol:items": [
+          {
+            "$symbol:name": "KompleteSynthesia image slot",
+            "$symbol:icon": null,
+            "$symbol:asset_image": "$asset_sha256",
+            "$symbol:is_user_saved": false,
+            "$symbol:is_favorite": false,
+            "$symbol:identifier": 1
+          }
+        ],
+        "$symbol:selected_index": 0
+      }
+    ]
+  },
+  "update_browser_asset": {
+    "kind": "notification",
+    "method": "$symbol:client_browser_set_sound_item",
+    "params": [
+      "$uuid",
+      "$serial",
+      0,
+      {
+        "$symbol:name": "KompleteSynthesia image slot",
+        "$symbol:icon": null,
+        "$symbol:asset_image": "$asset_sha256",
+        "$symbol:is_user_saved": false,
+        "$symbol:is_favorite": false,
+        "$symbol:identifier": 1
+      }
+    ]
+  },
+  "show_browser_product": {
+    "kind": "notification",
+    "method": "$symbol:client_browser_set_filter",
+    "params": [
+      "$uuid",
+      "$serial",
+      "products",
+      {
+        "$symbol:items": [
+          {
+            "$symbol:name": "KompleteSynthesia product image",
+            "$symbol:thumbnail_image": "$asset_sha256",
+            "$symbol:accessible_name": null
+          }
+        ],
+        "$symbol:selected_index": 0
+      }
+    ]
+  }
+}
