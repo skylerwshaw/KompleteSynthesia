@@ -493,6 +493,77 @@ A firmware modification is a separate, much riskier project and must never be at
 as an incidental experiment. No firmware writes, DFU/reboot commands, or persistent
 system changes are authorized by this research note.
 
+### Result — device image located and renderer analyzed (2026-08-13)
+
+The two blockers the handoff named are both resolved. Read-only static analysis only,
+no device contact.
+
+**The device image was on the machine all along.** `KSMK3Updater.app` (the "latest
+firmware download", bundle 4.2.0) ships its `Contents/Resources/payload` as a 396 MB
+Linux **ext4 root filesystem** ("rootfs"). The MK3 runs embedded Linux. Extracted
+read-only with `debugfs rdump` from Homebrew e2fsprogs (userspace, no mount, no writes).
+`/etc/os-release`: **NativeOS-KOM 2.1.4**, image `kompletekontrol-image-release-stm32mp1`.
+
+**The main/display SoC is identified** (previously unknown): `boot/` carries
+`stm32mp157a-ni-kks-mk3.dtb` → **STMicro STM32MP157A** (Cortex-A7 armv7 running Linux +
+a Cortex-M4 co-processor reached over `/dev/rpmsg`), with the STM32 LTDC driving the
+1280x480 panel through DRM/KMS.
+
+**The on-device renderer is a Qt/QML application, `/usr/bin/ni-roda`** ("Komplete Kontrol
+on-device rendering app", systemd `ni-roda.service`, ~26 MB stripped armv7 ELF, Qt6
+statically linked). `/etc/ni-user.env` sets `QT_QPA_PLATFORM=eglfs`, `1280x480`; the
+binary references `QEglFSKmsGbmScreen`, so it draws its QML scene graph as OpenGL ES
+textures straight to a DRM/KMS plane via GBM. There is no Wayland compositor in this path,
+and although `/dev/fb0` exists it is not the render sink. ni-roda is the device end of the
+same ODR msgpack-RPC protocol this project already drives from the host; its QML lives in a
+compiled-in module named `RodaCore`.
+
+**The host-to-renderer surface is entirely structured models, with no pixel/framebuffer
+message.** Enumerating the dispatch handlers ni-roda registers
+(`concrete_device_command_parser::register_handlers`) reproduces the known ODR vocabulary
+and nothing lower-level: parameter pages, plugin chains, browser, mixer, smartplay,
+lightguide, transport, focus. No message of any kind named for a framebuffer, bitmap,
+blit, canvas, surface, or video. This matches the earlier service-binary pass and closes
+the "is there a hidden low-level primitive" question in the negative.
+
+**There is, however, a real arbitrary-image host path, now pinned to its mechanism.**
+ni-roda has an `ni::odr::renderer::AssetCache` whose `addAsset(device_asset_id,
+std::span<const std::byte>)` accepts **raw image bytes from the host** (a `file_asset`
+host-model, updated via `make_asset_updater`), decodes them (libwebp/libpng/libjpeg/libtiff
+are all linked), and hands back an asset id that QML `Image` elements reference. Crucially
+the parameter-page QML binds `source: parameterModel.hasBackgroundImage ?
+parameterModel.background : ""` on an `Image` with `width: 1280` and `fillMode`/`sourceSize`
+set: **the page background is a full-width (1280 px) host-settable image.** This is exactly
+the arbitrary-image route avenue 2/3 exercised (the WebP-swap path and
+`odr_display_probe.py --image-slot`/`--upload-nonce`), now confirmed at the binary level as
+a general asset-upload cache, not a fixed icon table.
+
+**The animation ceiling is architectural, and this explains avenue 2/3's results.** The
+background is a static `Image`. Qt's animated-WebP element (`QQuickAnimatedImage` +
+libwebpdemux, which would play a clip smoothly device-side) is present but every use in
+RodaCore binds it to a compiled-in `qrc` asset (e.g. `downloadLAnimation.webp`), never to a
+host-uploaded asset. So the device will **not** animate arbitrary host content on its own:
+to move the full-screen background the host must re-upload/re-point the asset per frame,
+each frame paying an AssetCache register plus a GL texture upload. That is the same
+20-30 fps flashing ceiling avenue 2 measured. The one smooth device-side motion primitive
+remains avenue 3's driven numeric knob values (8-slot parameter page), which is native
+widget animation, not a canvas.
+
+Net for the "flowing video / falling notes" goal: no undocumented richer primitive exists
+in this image. The two host-reachable screen routes are (a) a full-1280-wide arbitrary
+still image as the page background, swappable but only at the per-frame-upload rate, and
+(b) up to 8 device-native parameter widgets animated smoothly by value. Neither is a
+free-form animated canvas, and the ceiling is set by RodaCore's fixed QML, not by a limit
+that a client-side trick can lift.
+
+One unclosed lead survives: `client_instance_mixer_set_meters` is a registered device-side
+handler (confirmed in the dispatch table), still never exercised live because it needs a
+DAW mixer session. Its widget/count ceiling is unknown; it is the only remaining
+device-side path not yet observed. Also noted for any future control-surface work, not
+display: `/dev/rpmsg` is the Cortex-A7 ↔ Cortex-M4 link, and `libgpiod` is present.
+
+Extracted tree kept in the session scratchpad only, deliberately out of git (588 MB).
+
 ## Recommended order
 
 1. ~~Prepare and run the single-rectangle raw USB probe from avenue 1.~~ Done, closed.
