@@ -564,6 +564,58 @@ display: `/dev/rpmsg` is the Cortex-A7 ↔ Cortex-M4 link, and `libgpiod` is pre
 
 Extracted tree kept in the session scratchpad only, deliberately out of git (588 MB).
 
+### Result — firmware-modification feasibility and the software-DFU update path (2026-08-13)
+
+This section is feasibility analysis for the separate, higher-risk project of modifying the
+device image so the instrument-logo region (the static `Image` background) could show
+animation. Static analysis only; nothing here was run against hardware, and re-flashing a
+modified image remains an explicit, operator-only decision (see hard boundary above).
+
+**Getting the "full video where the logo is" would be a one-element QML change, but the
+QML is welded into the binary.** The engine already supports animation (`QQuickAnimatedImage`
+compiled in, `libwebpdemux` linked); the only gap is that RodaCore uses a static `Image` for
+`parameterModel.background`. Changing that element's type (and binding its play state) is
+tiny in concept, but the QML is compiled into `/usr/bin/ni-roda` via qmlcachegen (0 `.qml`
+files on disk), and NI's `ni-roda` source is not available (only the build ref
+`main:520b5d92…`). So realizing the change means either rebuilding from source (unavailable),
+patching the compiled QML unit (fragile), or an LD_PRELOAD/Qt-resource-override shim that
+shadows the one QML file (promising, uncertain, `libmimalloc` already shows LD_PRELOAD is in
+use). A companion process on the second STM32 LTDC layer is blocked because ni-roda's EGLFS
+holds DRM master exclusively. The bottom line: delivery is not the hard part, authoring the
+change into a source-less monolithic Qt binary is.
+
+**Two ways to deliver a modified image, and the login is bolted shut.** (a) In-place on the
+running system: root is mounted `rw`, there is no dm-verity, so files are directly editable,
+but you need a shell and the stock image gives none, `root` has a disabled password (`*` in
+`/etc/shadow`), the only other account is `nologin`, there is no ssh/dropbear, and the real
+console `ttySTM0` is not in `securetty`. Reaching a shell in-place therefore needs the U-Boot
+serial console (physical UART pins) to append `init=/bin/sh`. (b) Whole-image re-flash over
+USB DFU: needs no device credentials.
+
+**The DFU update path is fully software-triggered over USB, no button, no disassembly
+(confirmed from the updater binary).** `KSMK3Updater.app`'s Mach-O contains
+`"Update successful, waiting for reboot..."` and, decisively, the fallback string
+`"…failed to boot into firmware update mode…please power-cycle it and click RETRY."` The
+normal path commands the running device into update mode over USB; the only fallback is a
+power-cycle. This lines up with `libubootenv.so.0` on the device (set a U-Boot "update" env
+flag, reboot into U-Boot DFU/stm32prog, flash over USB). The XMOS audio chip is a separate
+DFU target (`XMOS_DFU_RESETINTODFU`/`RESETFROMDFU`). The visible flashlayout has a single
+system-image phase, `#payload FWPL "${KKSMK3_ImageName}"`, with no separate TF-A/U-Boot
+phase surfacing, suggesting normal updates write only the system image and leave the
+bootloaders (and their DFU) intact. Whether the updater verifies the payload is unresolved:
+signature/digest machinery exists (`::: considering signature`, `, Digest=`) but could not
+be tied to a modified-payload refusal.
+
+**Why this makes a bootstrap approach low-risk in principle.** Because DFU entry needs only
+software plus a power-cycle, the recovery loop (re-enter update mode, re-flash NI's stock
+payload) needs no disassembly, so a soft-bricked rootfs is recoverable purely over USB. If
+updates truly write only the system image, the bootloader chain survives any bad rootfs
+flash. The remaining brick vectors are mechanical (corrupting the ext4 while editing;
+targeting the wrong partition if forced to raw `dfu-util` because the updater verifies), plus
+one device-only unknown: whether STM32MP1 secure-boot OTP fuses restrict DFU to signed
+images, which a first reversible "re-flash the stock payload" test would reveal. A staged,
+recovery-first de-risking procedure follows in the next section.
+
 ## Recommended order
 
 1. ~~Prepare and run the single-rectangle raw USB probe from avenue 1.~~ Done, closed.
