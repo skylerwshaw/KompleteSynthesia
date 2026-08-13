@@ -658,10 +658,10 @@ re-flashing is hardware-touching and needs confirmation):**
   (recoverability and the signing gate) before anything is modified.
 - *Stage 2 (first modified flash):* the smallest boot-safe change, editing the ext4 in a
   real Linux e2fs environment (preserve size, `e2fsck` before flashing), additive and
-  non-boot-blocking. Note there is no USB-gadget shell in the stock image, so a login change
-  only helps with physical UART; for the display goal specifically, iteration is a re-flash
-  loop regardless, so Stage 2 is best spent on the actual `Image`→`AnimatedImage` shim rather
-  than on a shell.
+  non-boot-blocking. Note a non-physical live shell is blocked at the kernel level (see the
+  continuance note below: the A7's Linux kernel has `CONFIG_USB_SUPPORT` unset, so no
+  USB-gadget getty is possible without a kernel rebuild). Iteration is therefore a re-flash
+  loop regardless, so Stage 2 is best spent on the actual `Image`→`AnimatedImage` shim.
 - *Stage 3+:* iterate the display change through the re-flash loop, each cycle covered by the
   Stage-1 recovery path.
 
@@ -671,6 +671,66 @@ a working compiled-unit patch or LD_PRELOAD/resource-override shim. Brick-safety
 largely a solved, recovery-backed problem; getting a correct modified binary is the
 remaining hard part, and the signing gate (Stage 1) is the one go/no-go that could close the
 whole route.
+
+### Continuance note — architecture, iteration path, and how to resume (2026-08-13)
+
+For a fresh agent picking this up. Everything below is from read-only static analysis of the
+extracted device image; no hardware was touched.
+
+**Device architecture (and why there is no cheap non-physical shell).** The MK3 main board is
+an **STM32MP157A**: a Cortex-A7 running Linux (NativeOS-KOM 2.1.4) plus a Cortex-M4
+co-processor. The A7's Linux kernel (`/boot/5.15/config-5.15.67`) has **`# CONFIG_USB_SUPPORT
+is not set`** and no ALSA, the A7 is *not* a USB device to the host. The host-facing USB
+(audio/MIDI/HID and the ODR "interface 3") is the separate **XMOS** chip. The A7 reaches the
+outside only through internal links: `RPMSG_TTY`/virtio to the Cortex-M4 (`/dev/rpmsg`) and a
+bridge to XMOS. The A7's own USB controller is used *only* by U-Boot/ROM for DFU
+(`stm32prog`), never by Linux. Consequence: a USB-gadget getty is impossible without
+rebuilding the kernel (enable USB support + `CONFIG_PHY_STM32_USBPHYC` + gadget + dwc2), which
+also shares the controller with DFU. So a non-physical live shell is effectively off the
+table; a one-time UART console (physical) is the only cheap shell, and the operator has asked
+to keep UART sidelined unless absolutely necessary.
+
+**Iteration path (with UART sidelined).** The only non-physical loop is the **DFU re-flash
+loop**: build a modified rootfs offline → enter update mode (software-triggered over USB) →
+flash → observe on the physical screen and via host-side ODR traces → repeat. ~1-2 min per
+cycle, recovery-covered (U-Boot auto-DFU on a bad image). Debugging is **screen-only**: with
+no shell there is no access to ni-roda's journal or device-side errors, so the QML-authoring
+step fails opaquely. That blindness is the main argument for a one-time UART session if the
+authoring stalls.
+
+**Critical path to "video where the instrument logo is", in priority order.**
+1. *Signing gate (reversible, first hardware contact).* Stage 1 above: re-flash NI's stock
+   payload, then a repacked-but-unmodified rootfs. If the repacked image boots, self-built
+   images are accepted and the route is open; if rejected, secure-boot enforces signing and
+   the whole rootfs-mod route is dead. Nothing is modified in this stage.
+2. *Author the QML change (the hard part).* Turn the `Image` at `parameterModel.background`
+   (1280x212) into an `AnimatedImage` (engine already supports it; `libwebpdemux` linked),
+   bound to a host-uploaded asset, and bind its play/pause state. The QML is compiled into
+   `/usr/bin/ni-roda` via qmlcachegen with no NI source, so this needs either a compiled-unit
+   patch or an LD_PRELOAD/Qt-resource-override shim (`libmimalloc` shows LD_PRELOAD is already
+   used). Uncertain; this is where the effort is.
+3. *Content.* For normal-mode Synthesia (fixed sequence/tempo) encode the whole song's roll as
+   one inter-frame-compressed animated WebP, upload once via the existing AssetCache path,
+   play device-side in sync. Not live/interactive (wait-mode would desync without extra
+   play-state binding).
+
+**How to resume the static work (the extracted tree is ephemeral).** The 588 MB extraction
+lives only in this session's scratchpad and will not persist. To re-extract, read-only, from
+the firmware download that IS the source of truth:
+`/Users/skylershaw/Downloads/KSMK3Updater.app/Contents/Resources/payload` is a 396 MB ext4
+image ("rootfs"). `brew install e2fsprogs`, then
+`"$(brew --prefix e2fsprogs)/sbin/debugfs" -R "rdump / <dest>" <payload>` (userspace,
+read-only, no mount). Key artifacts already located: `/usr/bin/ni-roda` (stripped armv7 Qt6
+binary, RodaCore QML compiled in), `/boot/5.15/config-5.15.67` (kernel config),
+`/etc/u-boot-stm32mp-initial-env-…` (partition table + `bootcmd_recovery` auto-DFU),
+`/etc/fstab`, `/etc/shadow` (root password disabled), `/etc/ni-user.env` (eglfs 1280x480,
+LD_PRELOAD). Updater flash/DFU analysis is on `KSMK3Updater.app/Contents/MacOS/KSMK3Updater`.
+
+**Open static items still worth doing before any hardware contact.** Identify the exact
+`stm32prog` flashlayout alt-setting the `FWPL` payload targets (not in the updater's strings;
+enumerable live via `dfu-util -l` once in DFU, partition name is `rootfs`); and prototype the
+LD_PRELOAD/resource-override shim against the extracted `ni-roda` offline to gauge whether the
+compiled QML can be shadowed at all before committing to the re-flash loop.
 
 ## Recommended order
 
