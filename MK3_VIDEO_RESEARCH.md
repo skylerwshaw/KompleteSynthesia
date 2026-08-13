@@ -2,6 +2,11 @@
 
 Last updated: 2026-08-13
 
+Interoperability research for this open-source project: how to drive the operator's own
+Komplete Kontrol MK3 screen from host software. Read-only analysis and reversible software
+probing on hardware the operator owns; the firmware section (avenue 4) is static analysis
+only, with no device writes.
+
 ## Goal and current boundary
 
 The goal is fluid, natural Synthesia motion on a Kontrol S-Series MK3 display, ideally
@@ -159,7 +164,7 @@ signed service. Static validation resolves exactly one breakpoint location at
 `bulk_write_helper::write_to_bulkpipe`; the prepared copy's signature verifies as
 `adhoc` and has no hardened-runtime flag.
 
-The first confirmed fallback run armed the hook and captured the temporary service's
+The first confirmed fallback run enabled the breakpoint and recorded the temporary service's
 8,098-byte startup notification `[2, "handshake", params]`. It did not select the cached
 checkerboard: the probe connected before device registration finished, saw zero devices,
 and refused before focus or display writes. The temporary service logged the keyboard
@@ -178,7 +183,7 @@ still shared NI's bundle identifier but not its signing requirement, initiated a
 The signed service's later Documents access is queued behind that orphaned request. Both
 the bundled and installed JavaScript files are intact and readable by ordinary processes.
 No PCAPNG was produced in this run. Future debug copies must use an isolated application
-identity or bypass this unrelated startup check so they cannot disturb NI's existing
+identity or avoid tripping this unrelated startup check so they cannot disturb NI's existing
 Documents permission record.
 
 The operator later approved the pending Documents requests. The already-running signed
