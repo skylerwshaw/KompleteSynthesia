@@ -33,7 +33,9 @@ guide, and the control surface (buttons, jogwheel, knobs) all work together, ver
 S88. Lighting is done via Native Instruments' own hardware connection service rather than
 the older HID scheme MK1/MK2 use, see [ODR_PROTOCOL.md](ODR_PROTOCOL.md) for how, and
 [MK3_COMPATIBILITY.md](MK3_COMPATIBILITY.md) for status and remaining gaps (default
-button/jogwheel lighting, screen mirroring, and testers wanted for S49/S61).
+button/jogwheel lighting, experimental 1280x212 display integration, and testers wanted
+for S49/S61). The four active research avenues for fluid MK3 screen motion are preserved
+in [MK3_VIDEO_RESEARCH.md](MK3_VIDEO_RESEARCH.md).
 
 ## Setup
 

@@ -85,10 +85,13 @@ holding the interface, and is fixed, see `TODO.md`.
 ## Where to go next
 
 - **`TODO.md`**: the full list of open MK3 items (default lighting loss, unmapped
-  buttons, Shift+Play/Record, dead knob/button IDs, screen mirroring), plus the one item
-  that needs hardware rather than work: **all of this was built against a single S88 MK3**,
-  so an S49 owner is wanted and an S61 is unverified. That section carries the whole test
-  protocol, which is one command.
+  buttons, Shift+Play/Record, dead knob/button IDs), plus the one item that needs
+  hardware rather than work: **all of this was built against a single S88 MK3**, so an
+  S49 owner is wanted and an S61 is unverified. That section carries the whole test
+  protocol, which is one command. For the screen, arbitrary 1280x212 ODR imagery is now
+  verified through 10 requested FPS; Synthesia capture/encoding, focus lifecycle, cache
+  bounds, and app integration remain open, and no full 1280x480 path is known. See
+  `TODO.md` and `ODR_PROTOCOL.md` for the measured results.
 - **`ODR_PROTOCOL.md`**: the service's socket protocol, how lighting actually works now,
   and the two silent-failure traps that make it look unreachable. `scripts/odr_lightguide.py`
   is a standalone reference client.

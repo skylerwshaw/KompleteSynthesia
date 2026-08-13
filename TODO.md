@@ -166,14 +166,67 @@ Previous/Next, Knobs 2-8) but `receivedEvent:value:` has no actual case for them
 (pre-existing gap, not introduced by the MK3 work), they're logged/no-op today.
 Worth deciding what, if anything, each should actually do.
 
-## Display/screen mirroring for MK3
+## Display/screen mirroring for MK3 (ODR banner path verified; integration not started)
 
-Not started at all. `VideoController.m`'s entire MK3 code path (screen size
-1280x480, command byte still literally named `kCommandScreenUpdateMK2`, disabled
-32-bit-alignment assertions) is untested guesswork never exercised against real
-hardware, and `AppDelegate.m` hard-gates `VideoController` instantiation to
-`mk == 2` only, so MK3 never reaches it today. No community prior art exists for
-this at all, would be a from-scratch effort.
+The durable research plan for flowing motion, including the four remaining avenues and
+their decisive experiments, is in [`MK3_VIDEO_RESEARCH.md`](MK3_VIDEO_RESEARCH.md).
+Do not treat ODR's observed cadence as a proven hardware display limit.
+
+`VideoController.m`'s speculative MK3 path (screen size 1280x480, command byte still
+literally named `kCommandScreenUpdateMK2`, disabled 32-bit-alignment assertions) must not
+be enabled. On 2026-08-12 a guarded probe sent its bare legacy `0x84` format twice as a
+single 64x64 RGB565 rectangle. Both 8,228-byte USB transfers completed on MK3 interface
+3 endpoint 4, but the S88 MK3 display remained unchanged on “Default MIDI template.”
+The direct MK2 compatibility path is therefore closed; investigate pixel or renderer
+operations only inside MK3's framed `DISPLAY`/MessagePack transport.
+
+The raw-USB route MK2 uses remains blocked while `NIHardwareConnectionService` owns USB
+interface 3, but MK3 no longer needs that route for a useful first display implementation.
+
+**2026-08-12: ODR arbitrary imagery and refresh verified on an S88 MK3.** A real Komplete
+Kontrol capture revealed that the parameter page's `plugin_data.background` field refers
+to an asset uploaded by SHA-256 through `add_asset`. Two custom lossless WebPs rendered
+upright and at the expected colors across the full 1280x212 banner region. Alternating
+the two pre-uploaded assets worked visibly at 0.5, 2, 5, and 10 requested FPS; the 1 FPS
+stage was sent but not operator-scored. At 2 FPS there may have been a very short dark
+interval between frames, but it was not certain and 5/10 FPS looked clean. The registered
+asset inventory was 100 before the ladder and remained 100 after the probe disconnected
+and the inventory client reconnected, so identical hashes are deduplicated. Full protocol
+details and timings are in `ODR_PROTOCOL.md`.
+
+This proves a useful partial-height Synthesia display is possible, but app integration is
+still open:
+
+**2026-08-12: native on-device renderer animation confirmed smooth at 30 Hz, for one knob
+and for all eight at once.** Per `MK3_VIDEO_RESEARCH.md` avenue 3, driving device-native
+knob values directly (no image upload, no asset swap) animates fluidly on real hardware.
+First a single knob ("super smooth," operator's words), then all eight simultaneously,
+phase-staggered, 240 messages/second combined, also confirmed independent and smooth with
+no degradation, then all eight again at 60 Hz (480 messages/second combined), still
+smooth. This is the first result that beats the WebP asset-swap ceiling above.
+
+Also checked directly on hardware: whether any real NKS2 instrument (Massive X, Hypha,
+both owned) drives continuous animation on the MK3 screen itself, not just in Komplete
+Kontrol's own host-side plugin GUI. First check (Massive X's wavetable knob) looked
+negative, but a relay capture caught the real story: Hypha streams its Morpher X/Y
+position continuously regardless of what's on screen, and it's just sent to a knob page
+(Performance) the operator wasn't looking at. Navigating to the actual Morpher page
+confirmed it animates, real-world precedent for exactly the mechanism this project's own
+probe already uses. Doesn't reveal a richer widget type, still just knobs, so it narrows
+rather than proves whether enough independent objects exist to represent falling notes,
+see avenue 3's "Next work" in `MK3_VIDEO_RESEARCH.md`, which is now mostly "how much of
+the 1280x480 panel can knobs/objects tile across."
+
+- Capture and crop/scale the Synthesia view to 1280x212, encode WebP frames, and feed the
+  ODR asset/background path at a conservative rate no higher than the verified 10 FPS.
+- Reuse one ODR session for lighting and display ownership; coordinate focus, page
+  selection, reconnect, and restoration so controls and the light guide stay functional.
+- Bound or recycle content hashes. Video frames are normally unique, unlike the two test
+  assets, so long-running playback must not grow the service's persistent asset inventory.
+- Measure end-to-end capture-to-display latency and investigate the possible dark interval
+  with a camera rather than relying on visual memory.
+- Determine whether another model slot can cover more than the verified 1280x212 banner.
+  No full 1280x480 framebuffer path has been found.
 
 ## Feature disparity (MK1/MK2 vs MK3)
 
@@ -183,7 +236,9 @@ above with more detail, this points there instead of repeating it.
 
 ### MK1/MK2 has it, MK3 doesn't
 
-- **Screen mirroring.** See "Display/screen mirroring for MK3" above, not started at all.
+- **Full-screen mirroring.** See "Display/screen mirroring for MK3" above. Arbitrary
+  1280x212 imagery is verified through ODR, but capture/encoding and app integration are
+  not implemented and no full 1280x480 path is known.
 - **All button LED feedback, including the default lighting MK3 shows on boot.**
   `HIDController.m`'s `updateButtonLightMap:` is a no-op for MK3 (`// FIXME: We dont know
   yet how to specifically update the button lighting.`), and the momentary flash-on-press

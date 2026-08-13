@@ -169,3 +169,76 @@ Remember the 16-byte preamble when parsing the client side.
 Beyond lighting, the same session carries the screens, mixer track data, browser model,
 plugin chain and parameter pages, the full PLUG-IN mode feature set that raw USB bulk
 never yielded, already decoded and served by the agent.
+
+## What actually drives the MK3 screen
+
+The MK3 screen is model-driven rather than exposing a framebuffer method. Relaying a real
+Komplete Kontrol session while switching between plug-in, browser, and MIDI-settings views
+found no `screen`, `pixel`, `bitmap`, or framebuffer-style operation in the 437-name
+`symbol_registry`. That initially made arbitrary imagery look impossible, but the asset
+path inside the parameter-page model turns out to be much more capable than its API names
+suggest.
+
+There are roughly 30 `client_*_set_*` methods that push structured DAW-model state, and
+the device (or the agent, this session can't tell which renders) draws its screen from
+that:
+
+- `client_parameter_page_set_parameter_value`: `{value: 0.0, display_value: "C"}`, a
+  numeric value plus its human-readable label, sent per parameter as it changes.
+- `client_mixer_set_track_data`, `client_browser_set_data_model`,
+  `client_plugin_chain_set_data`: full structured snapshots of mixer, browser, and plugin
+  state, track names, presets, filter categories, all as plain strings and numbers.
+- `nks1_layout`/`nks2_layout`: named layout templates used to populate device-owned
+  screen layouts.
+
+Images are content-addressed assets. `add_asset` accepts a SHA-256 digest and the encoded
+asset bytes; `registered_assets` in the hello reply lists cached digests. Structured
+payloads reference an asset by its digest rather than embedding its bytes.
+
+### Verified arbitrary-image path
+
+On 2026-08-12, `scripts/odr_display_probe.py` used a schema captured from Komplete
+Kontrol 2.2.0 traffic to test that path against an S88 MK3 and Hardware Connection
+Service 2.1.5:
+
+1. Connect to the keyboard and request focus using the same lifecycle as the working
+   light-guide client.
+2. Upload two deterministic lossless WebPs with `add_asset`. Both are `1280x212`; their
+   payloads are 896 and 926 bytes because the test patterns compress extremely well.
+3. Select the `parameter` page with `client_set_page`.
+4. Put the asset digest in `plugin_data.background` and send it through
+   `client_parameter_page_set_data`.
+
+The first magenta/cyan checkerboard appeared upright across the complete 1280x212 banner
+region. A photograph confirmed the correct colors, orientation, and width; the lower part
+of the 1280x480 screen remained black. This proves ODR can display arbitrary user-supplied
+imagery, despite having no framebuffer-named method.
+
+The probe then alternated two already-uploaded assets for 12 seconds at each requested
+rate. Operator-visible results were:
+
+| Requested rate | Sends | Client send time | Visible result |
+| --- | ---: | ---: | --- |
+| 0.5 FPS | 6 | 12.002 s | Clean alternation |
+| 1 FPS | 12 | 12.005 s | Sent, but not operator-scored |
+| 2 FPS | 24 | 12.002 s | Clean; a very brief dark interval was possible but uncertain |
+| 5 FPS | 60 | 12.002 s | Clean alternation |
+| 10 FPS | 120 | 12.005 s | Clean alternation; described as working great |
+
+These methods are notifications, so the timings measure client dispatch rather than a
+device acknowledgement. The visual observations are what establish that frames actually
+changed. The service reported 100 registered assets before the ladder and again after the
+probe disconnected and the inventory client reconnected, confirming that resending the
+same two hashes was deduplicated.
+
+`scripts/fixtures/odr_display_schema_2_2_0.json` preserves the captured field shape
+without serial numbers or raw session data. `scripts/test_odr_display_tools.py` covers
+framing, registry resolution, binary extraction/redaction, stale-relay recovery, stable
+test images, and schema substitution.
+
+**Conclusion**: arbitrary partial-height imagery is verified at up to 10 requested FPS.
+This is not yet a full-screen framebuffer or an integrated Synthesia mirror: the proven
+region is 1280x212, focus/page ownership still needs lifecycle work, and actual Synthesia
+capture/encoding has not been connected to this path. It is nevertheless a viable route
+to a useful MK3 display feature and overturns the earlier conclusion that ODR was limited
+to icons, thumbnails, and text.
