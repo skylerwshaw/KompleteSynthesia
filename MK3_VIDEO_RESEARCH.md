@@ -616,6 +616,62 @@ one device-only unknown: whether STM32MP1 secure-boot OTP fuses restrict DFU to 
 images, which a first reversible "re-flash the stock payload" test would reveal. A staged,
 recovery-first de-risking procedure follows in the next section.
 
+### De-risking the bootstrap approach — recovery is built into U-Boot (2026-08-13)
+
+Reading the device's shipped initial U-Boot environment
+(`/etc/u-boot-stm32mp-initial-env-…-r2-r0`) makes the brick picture much more favorable than
+"single rootfs, no A/B" alone suggested. Static analysis only.
+
+**Partition table** (`partitions=` in the env): `ssbl` (2M, second-stage bootloader / FIP),
+`bootfs` (64M, bootable: kernel + dtb + extlinux), `vendorfs` (16M), **`rootfs` (746M)**,
+`userfs` (rest, = `/ni`, `mmcblk0p5`). Single rootfs, no A/B slot, but the bootloaders live
+in `ssbl`/`bootfs`, partitions a rootfs-only modification never touches.
+
+**U-Boot recovers itself into USB DFU when the image is bad.** The env defines
+`bootcmd_recovery = … stm32prog usb 0 1` (enter USB DFU), and reaches it two ways:
+`altbootcmd = run bootcmd_recovery` (the standard bootcount fallback) and, inside
+`bootcmd_stm32mp`, `if test ${valid_image_in_flash} = 0; then run bootcmd_recovery`. So an
+unbootable or invalid image **auto-drops into USB DFU recovery with no button and no
+disassembly.** The normal (working-system) DFU entry is the software trigger the updater
+uses; this is the failure-path backstop underneath it. (`start_cm4` also shows U-Boot brings
+up the Cortex-M4 real-time firmware; not relevant to display work.)
+
+**Consequence for brick-safety:** if a modification writes only the `rootfs` partition, then
+`ssbl` + `bootfs` + U-Boot survive intact, and U-Boot's own recovery re-enters USB DFU on a
+bad image, so every rootfs mistake is re-flashable over USB. Combined with the software-DFU
+update path, the recovery loop needs no case-opening at any point. The bootloaders are the
+only "no-touch" zone.
+
+**Staged, recovery-first procedure (each stage gated; static until an explicit operator go;
+re-flashing is hardware-touching and needs confirmation):**
+
+- *Stage 0 (static, done):* everything above. One static item remains, identify the exact
+  stm32prog flashlayout entry/alt-setting that `FWPL` targets, so a raw `dfu-util`/`stm32prog`
+  path can write the rootfs partition only, in case the updater verifies and refuses a
+  modified payload.
+- *Stage 1 (first hardware contact, fully reversible, the linchpin):* prove the recovery
+  loop with NI's **unmodified** stock payload, enter update mode and re-flash it, confirm it
+  boots. Then re-flash a **repacked-but-unmodified** rootfs (mounted, unmounted, re-imaged
+  with identical content). If that boots, DFU accepts self-built images → modification is
+  viable. If it is rejected, secure-boot/DFU enforces signing → the rootfs-mod route is
+  blocked and this stops here. This single stage closes the two biggest unknowns
+  (recoverability and the signing gate) before anything is modified.
+- *Stage 2 (first modified flash):* the smallest boot-safe change, editing the ext4 in a
+  real Linux e2fs environment (preserve size, `e2fsck` before flashing), additive and
+  non-boot-blocking. Note there is no USB-gadget shell in the stock image, so a login change
+  only helps with physical UART; for the display goal specifically, iteration is a re-flash
+  loop regardless, so Stage 2 is best spent on the actual `Image`→`AnimatedImage` shim rather
+  than on a shell.
+- *Stage 3+:* iterate the display change through the re-flash loop, each cycle covered by the
+  Stage-1 recovery path.
+
+**What de-risking does NOT solve:** the authoring problem is unchanged, the QML is compiled
+into `ni-roda` with no source, so producing the modified `Image`→`AnimatedImage` still needs
+a working compiled-unit patch or LD_PRELOAD/resource-override shim. Brick-safety is now
+largely a solved, recovery-backed problem; getting a correct modified binary is the
+remaining hard part, and the signing gate (Stage 1) is the one go/no-go that could close the
+whole route.
+
 ## Recommended order
 
 1. ~~Prepare and run the single-rectangle raw USB probe from avenue 1.~~ Done, closed.
