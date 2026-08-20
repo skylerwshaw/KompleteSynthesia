@@ -56,6 +56,11 @@ NS_ASSUME_NONNULL_BEGIN
 // shared service and takes the light guide down with it, so this never emits one.
 - (nullable NSData*)uploadImageAsset:(NSData*)imageBytes;
 
+// Shows the given asset (returned by uploadImageAsset:) as the full-width parameter-page
+// background, by replaying a captured page frame with our identity and this handle
+// substituted in (see docs/adr/0001). NO if unsupported or the handle is not 32 bytes.
+- (BOOL)showParameterPageBackgroundWithHandle:(NSData*)handle;
+
 - (void)disconnect;
 
 @property (nonatomic, readonly, getter=isConnected) BOOL connected;

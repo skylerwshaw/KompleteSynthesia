@@ -12,6 +12,7 @@
 #import <CommonCrypto/CommonDigest.h>
 
 #import "LogViewController.h"
+#import "MK3ScreenTemplate.h"
 
 static NSString* const kODRSocketPath = @"/Users/Shared/Native Instruments/com.native-instruments.odr_agent.kks";
 
@@ -28,6 +29,8 @@ static NSString* const kODRSymbolRequestFocus = @"client_request_focus";
 static NSString* const kODRSymbolLightGuide = @"client_lightguide_set_leds";
 static NSString* const kODRSymbolMidiAddressing = @"client_midi_addressing";
 static NSString* const kODRSymbolAddAsset = @"add_asset";
+static NSString* const kODRSymbolSetPage = @"client_set_page";
+static NSString* const kODRSymbolParameterPage = @"parameter";
 
 // Sentinel for a name the connected agent's registry did not provide. Screen support
 // (add_asset) is optional: an older agent simply lacks it, and lighting must still work.
@@ -108,6 +111,19 @@ static void ODRAppendBinary(NSMutableData* d, const void* bytes, NSUInteger len)
         [d appendBytes:&v length:4];
     }
     [d appendBytes:bytes length:len];
+}
+
+// Replaces the first occurrence of `find` with `replacement` in-place. Both must be the
+// same length, so the surrounding frame (and its length prefix) stay valid.
+static void ODRReplaceSpan(NSMutableData* data, NSData* find, NSData* replacement)
+{
+    if (find.length == 0 || find.length != replacement.length) {
+        return;
+    }
+    NSRange range = [data rangeOfData:find options:0 range:NSMakeRange(0, data.length)];
+    if (range.location != NSNotFound) {
+        [data replaceBytesInRange:range withBytes:replacement.bytes length:replacement.length];
+    }
 }
 
 static void ODRAppendMap(NSMutableData* d, NSUInteger count)
@@ -220,6 +236,9 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     uint32_t lightGuideMethod;
     uint32_t midiAddressingField;
     uint32_t addAssetMethod;
+    uint32_t setPageMethod;
+    uint32_t parameterPageIndex;
+    BOOL didShowParameterPage;
 
     dispatch_source_t drain;
 }
@@ -297,6 +316,8 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         log = logViewController;
         sock = -1;
         addAssetMethod = kODRMethodUnresolved;
+        setPageMethod = kODRMethodUnresolved;
+        parameterPageIndex = kODRMethodUnresolved;
     }
     return self;
 }
@@ -313,17 +334,11 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
 
 #pragma mark - Framing
 
-// Every message is a uint32 little-endian length followed by an msgpack-RPC message.
-- (BOOL)sendMessage:(NSData*)message
+- (BOOL)writeAllBytes:(NSData*)packet
 {
     if (sock < 0) {
         return NO;
     }
-
-    NSMutableData* packet = [NSMutableData dataWithCapacity:message.length + 4];
-    uint32_t lengthLE = CFSwapInt32HostToLittle((uint32_t)message.length);
-    [packet appendBytes:&lengthLE length:4];
-    [packet appendData:message];
 
     const uint8_t* bytes = packet.bytes;
     size_t remaining = packet.length;
@@ -341,6 +356,16 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         remaining -= written;
     }
     return YES;
+}
+
+// Every message is a uint32 little-endian length followed by an msgpack-RPC message.
+- (BOOL)sendMessage:(NSData*)message
+{
+    NSMutableData* packet = [NSMutableData dataWithCapacity:message.length + 4];
+    uint32_t lengthLE = CFSwapInt32HostToLittle((uint32_t)message.length);
+    [packet appendBytes:&lengthLE length:4];
+    [packet appendData:message];
+    return [self writeAllBytes:packet];
 }
 
 // Reads one whole frame, keeping only its tail. Enough to tell a success from a refusal
@@ -514,6 +539,8 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         // Screen support needs a registry to resolve add_asset from; a legacy agent has
         // none, so it lights keys but cannot drive the screen.
         addAssetMethod = kODRMethodUnresolved;
+        setPageMethod = kODRMethodUnresolved;
+        parameterPageIndex = kODRMethodUnresolved;
     } else {
         NSUInteger iConnect = [registry indexOfObject:kODRSymbolConnectDevice];
         NSUInteger iFocus = [registry indexOfObject:kODRSymbolRequestFocus];
@@ -533,6 +560,11 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         // lighting is the core feature and must work regardless.
         NSUInteger iAsset = [registry indexOfObject:kODRSymbolAddAsset];
         addAssetMethod = (iAsset == NSNotFound) ? kODRMethodUnresolved : (uint32_t)iAsset;
+
+        NSUInteger iSetPage = [registry indexOfObject:kODRSymbolSetPage];
+        NSUInteger iParamPage = [registry indexOfObject:kODRSymbolParameterPage];
+        setPageMethod = (iSetPage == NSNotFound) ? kODRMethodUnresolved : (uint32_t)iSetPage;
+        parameterPageIndex = (iParamPage == NSNotFound) ? kODRMethodUnresolved : (uint32_t)iParamPage;
     }
 
     NSMutableData* attachMethod = [NSMutableData data];
@@ -615,6 +647,7 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     sock = -1;
     serial = nil;
     uuid = nil;
+    didShowParameterPage = NO;
 }
 
 #pragma mark - Lighting
@@ -680,6 +713,38 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         return nil;
     }
     return [NSData dataWithBytes:digest length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (BOOL)showParameterPageBackgroundWithHandle:(NSData*)handle
+{
+    if (self.screenSupported == NO || handle.length != CC_SHA256_DIGEST_LENGTH) {
+        return NO;
+    }
+
+    // The device only renders the background while it is on the parameter page. Switch it
+    // there once per connection (resolved by name; harmless if already there).
+    if (didShowParameterPage == NO && setPageMethod != kODRMethodUnresolved &&
+        parameterPageIndex != kODRMethodUnresolved) {
+        NSMutableData* pageParams = [NSMutableData data];
+        ODRAppendArray(pageParams, 3);
+        ODRAppendString(pageParams, uuid);
+        ODRAppendString(pageParams, serial);
+        ODRAppendUInt(pageParams, parameterPageIndex);
+        [self sendMessage:[self notificationWithMethod:setPageMethod params:pageParams]];
+        didShowParameterPage = YES;
+    }
+
+    // Replay the captured parameter-page frame with the three device-/session-specific spans
+    // swapped in. All are fixed-length, so the frame stays valid without re-encoding the
+    // fragile page model (see MK3ScreenTemplate.h, docs/adr/0001).
+    NSMutableData* frame = [NSMutableData dataWithBytes:kODRPageTemplate length:sizeof(kODRPageTemplate)];
+    ODRReplaceSpan(frame, [kODRTemplateUUID dataUsingEncoding:NSASCIIStringEncoding],
+                   [uuid dataUsingEncoding:NSASCIIStringEncoding]);
+    ODRReplaceSpan(frame, [kODRTemplateSerial dataUsingEncoding:NSASCIIStringEncoding],
+                   [serial dataUsingEncoding:NSASCIIStringEncoding]);
+    ODRReplaceSpan(frame, [NSData dataWithBytes:kODRTemplateHandle length:sizeof(kODRTemplateHandle)],
+                   handle);
+    return [self writeAllBytes:frame];
 }
 
 @end

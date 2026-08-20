@@ -110,12 +110,7 @@ static const NSTimeInterval kScreenCoalesceFloor = 0.3;
         [log logLine:@"MK3 screen: asset upload failed"];
         return;
     }
-
-    // TODO(step 5): display the uploaded asset by replaying a captured
-    // client_parameter_page_set_data frame with this 32-byte handle substituted in. That
-    // needs the bundled template captured on real MK3 hardware (see docs/adr/0001). Until
-    // then the asset is stored on the device but not yet shown.
-    // ponytail: upload is proven and safe now; the show path lands with the template.
+    [odr showParameterPageBackgroundWithHandle:handle];
 }
 
 #pragma mark - Rendering

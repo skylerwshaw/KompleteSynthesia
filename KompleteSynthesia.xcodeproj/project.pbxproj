@@ -78,6 +78,7 @@
 		2AA21CD2A118E268D202CDEC /* ODRClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ODRClient.h; sourceTree = "<group>"; };
 		4DC179BBE3F3E94E1F177EB3 /* ODRClient.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ODRClient.m; sourceTree = "<group>"; };
 		5C0000000000000000000002 /* ScreenController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScreenController.h; sourceTree = "<group>"; };
+		5C0000000000000000000004 /* MK3ScreenTemplate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MK3ScreenTemplate.h; sourceTree = "<group>"; };
 		5C0000000000000000000003 /* ScreenController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScreenController.m; sourceTree = "<group>"; };
 		BBD160CA2B252C6E0054E976 /* UpdateManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = UpdateManager.h; sourceTree = "<group>"; };
 		BBD160CB2B252C6E0054E976 /* UpdateManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = UpdateManager.m; sourceTree = "<group>"; };
@@ -148,6 +149,7 @@
 				4DC179BBE3F3E94E1F177EB3 /* ODRClient.m */,
 				5C0000000000000000000002 /* ScreenController.h */,
 				5C0000000000000000000003 /* ScreenController.m */,
+				5C0000000000000000000004 /* MK3ScreenTemplate.h */,
 				BB31821429679983005EB410 /* MIDIController.h */,
 				BB31821529679983005EB410 /* MIDIController.m */,
 				BB8570F82971935B0004218B /* SynthesiaController.h */,
