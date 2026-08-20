@@ -336,24 +336,31 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
 
 - (BOOL)writeAllBytes:(NSData*)packet
 {
-    if (sock < 0) {
-        return NO;
-    }
-
-    const uint8_t* bytes = packet.bytes;
-    size_t remaining = packet.length;
-    while (remaining > 0) {
-        ssize_t written = send(sock, bytes, remaining, 0);
-        if (written <= 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            [log logLine:[NSString stringWithFormat:@"ODR write failed: %s", strerror(errno)]];
-            [self disconnect];
+    // Serialize whole-message writes. Lighting is driven from CoreMIDI callback threads and
+    // the screen from the main queue, both sharing this one socket; without this, two
+    // send() loops interleave and corrupt the length-prefixed msgpack stream, breaking the
+    // connection for both. The lock is per-message, so complete frames still interleave
+    // freely, only their bytes cannot.
+    @synchronized(self) {
+        if (sock < 0) {
             return NO;
         }
-        bytes += written;
-        remaining -= written;
+
+        const uint8_t* bytes = packet.bytes;
+        size_t remaining = packet.length;
+        while (remaining > 0) {
+            ssize_t written = send(sock, bytes, remaining, 0);
+            if (written <= 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                [log logLine:[NSString stringWithFormat:@"ODR write failed: %s", strerror(errno)]];
+                [self disconnect];
+                return NO;
+            }
+            bytes += written;
+            remaining -= written;
+        }
     }
     return YES;
 }

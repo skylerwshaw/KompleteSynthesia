@@ -101,10 +101,15 @@ static const unsigned char kMK3ControlSurfaceCCKnobCount = 8;
 // replug needs an app restart (experimental v1).
 - (ScreenController*)screenController
 {
-    if (_screenController == nil && hid.odrClient != nil) {
-        _screenController = [[ScreenController alloc] initWithODRClient:hid.odrClient logViewController:log];
+    // Accessed from the menu (main thread) and from lightNote: (CoreMIDI callback threads),
+    // so guard the one-time construction.
+    @synchronized(self) {
+        if (_screenController == nil && hid.odrClient != nil) {
+            _screenController = [[ScreenController alloc] initWithODRClient:hid.odrClient
+                                                         logViewController:log];
+        }
+        return _screenController;
     }
-    return _screenController;
 }
 
 - (id)initWithLogController:(LogViewController*)lc
