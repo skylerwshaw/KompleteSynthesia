@@ -27,6 +27,7 @@
 		BBA0166929611D1D0018B2DB /* MIDI2HIDController.m in Sources */ = {isa = PBXBuildFile; fileRef = BBA0166829611D1D0018B2DB /* MIDI2HIDController.m */; };
 		BBB5EFAF29738E6F00C1BAC3 /* USBController.m in Sources */ = {isa = PBXBuildFile; fileRef = BBB5EFAE29738E6F00C1BAC3 /* USBController.m */; };
 		C592CD6AFE6CE397E0B61772 /* ODRClient.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DC179BBE3F3E94E1F177EB3 /* ODRClient.m */; };
+		5C0000000000000000000001 /* ScreenController.m in Sources */ = {isa = PBXBuildFile; fileRef = 5C0000000000000000000003 /* ScreenController.m */; };
 		BBD160CC2B252C6E0054E976 /* UpdateManager.m in Sources */ = {isa = PBXBuildFile; fileRef = BBD160CB2B252C6E0054E976 /* UpdateManager.m */; };
 		BBDC7FA72B3B99C600C9E30D /* CoreAudioTools.m in Sources */ = {isa = PBXBuildFile; fileRef = BBDC7FA62B3B99C600C9E30D /* CoreAudioTools.m */; };
 		BBE086C22989965900DC59B3 /* CoreMIDI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBE086C12989965900DC59B3 /* CoreMIDI.framework */; };
@@ -76,6 +77,8 @@
 		BBB5EFAE29738E6F00C1BAC3 /* USBController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = USBController.m; sourceTree = "<group>"; };
 		2AA21CD2A118E268D202CDEC /* ODRClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ODRClient.h; sourceTree = "<group>"; };
 		4DC179BBE3F3E94E1F177EB3 /* ODRClient.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ODRClient.m; sourceTree = "<group>"; };
+		5C0000000000000000000002 /* ScreenController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScreenController.h; sourceTree = "<group>"; };
+		5C0000000000000000000003 /* ScreenController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScreenController.m; sourceTree = "<group>"; };
 		BBD160CA2B252C6E0054E976 /* UpdateManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = UpdateManager.h; sourceTree = "<group>"; };
 		BBD160CB2B252C6E0054E976 /* UpdateManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = UpdateManager.m; sourceTree = "<group>"; };
 		BBDC7FA52B3B99C600C9E30D /* CoreAudioTools.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CoreAudioTools.h; sourceTree = "<group>"; };
@@ -143,6 +146,8 @@
 				BBB5EFAE29738E6F00C1BAC3 /* USBController.m */,
 				2AA21CD2A118E268D202CDEC /* ODRClient.h */,
 				4DC179BBE3F3E94E1F177EB3 /* ODRClient.m */,
+				5C0000000000000000000002 /* ScreenController.h */,
+				5C0000000000000000000003 /* ScreenController.m */,
 				BB31821429679983005EB410 /* MIDIController.h */,
 				BB31821529679983005EB410 /* MIDIController.m */,
 				BB8570F82971935B0004218B /* SynthesiaController.h */,
@@ -306,6 +311,7 @@
 				BB229913299040C500CFFB7C /* ApplicationObserver.m in Sources */,
 				BBB5EFAF29738E6F00C1BAC3 /* USBController.m in Sources */,
 				C592CD6AFE6CE397E0B61772 /* ODRClient.m in Sources */,
+				5C0000000000000000000001 /* ScreenController.m in Sources */,
 				BB8570FA2971935B0004218B /* SynthesiaController.m in Sources */,
 				BB7AB63E298042530081B05E /* ColorField.m in Sources */,
 				BB8A5B9C298C45BB0076066D /* VideoController.m in Sources */,
