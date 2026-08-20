@@ -13,6 +13,7 @@
 #import <CoreServices/CoreServices.h>
 
 #import "LogViewController.h"
+#import "ScreenController.h"
 #import "VirtualEvent.h"
 
 const CGKeyCode kVK_ArrowLeft = 0x7B;
@@ -90,6 +91,20 @@ static const unsigned char kMK3ControlSurfaceCCKnobCount = 8;
 
     unsigned char keyStates[255];
     unsigned char colorMap[kColorMapSize];
+
+    ScreenController* _screenController;
+}
+
+// Built lazily once the shared ODR session exists: it connects during HID setup, which
+// happens after this object's init, so it is not available at init time. Cached thereafter.
+// A device replug within a session keeps the first client; re-driving the screen after a
+// replug needs an app restart (experimental v1).
+- (ScreenController*)screenController
+{
+    if (_screenController == nil && hid.odrClient != nil) {
+        _screenController = [[ScreenController alloc] initWithODRClient:hid.odrClient logViewController:log];
+    }
+    return _screenController;
 }
 
 - (id)initWithLogController:(LogViewController*)lc
@@ -279,8 +294,10 @@ static const unsigned char kMK3ControlSurfaceCCKnobCount = 8;
             }
             if (status == kMIDICVStatusNoteOn && velocity > 0) {
                 keyStates[key] |= hand | state;
+                [self.screenController noteOn:(unsigned char)note hand:(hand == kKeyStateLeft ? 0 : 1)];
             } else if (status == kMIDICVStatusNoteOff || velocity == 0) {
                 keyStates[key] &= ((kKeyStateMaskHand | kKeyStateMaskThumb) ^ 0xFF);
+                [self.screenController noteOff:(unsigned char)note];
             }
             break;
         }

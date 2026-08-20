@@ -28,6 +28,7 @@ typedef enum colorMapState {
 
 @class LogViewController;
 @class SynthesiaController;
+@class ScreenController;
 
 @protocol MIDI2HIDControllerDelegate <NSObject>
 - (void)preferences:(id)sender;
@@ -46,6 +47,10 @@ typedef enum colorMapState {
 @property (assign, nonatomic, readonly) unsigned char* colors;
 
 @property (nonatomic, weak) id<MIDI2HIDControllerDelegate> delegate;
+
+// Drives the MK3 Screen off the shared ODR session, fed the now-playing notes this class
+// already decodes. nil on non-MK3 or when NI's service is absent. See CONTEXT.md.
+@property (nonatomic, readonly, nullable) ScreenController* screenController;
 
 - (id)initWithLogController:(LogViewController*)lc
               hidController:(HIDController*)hc

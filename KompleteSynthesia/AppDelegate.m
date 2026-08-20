@@ -14,6 +14,7 @@
 #import "MIDI2HIDController.h"
 #import "PreferencesWindowController.h"
 #import "UpdateManager.h"
+#import "ScreenController.h"
 #import "VideoController.h"
 
 @interface AppDelegate ()
@@ -66,6 +67,7 @@ NSString* kConnectionServicePath = @"/Library/Application Support/Native Instrum
 
 NSString* kAppDefaultActivateSynthesia = @"forward_buttons_to_synthesia_only";
 NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
+NSString* kAppDefaultMK3Screen = @"mk3_screen";
 
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification
 {
@@ -213,6 +215,11 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     [userDefaults registerDefaults:@{kAppDefaultActivateSynthesia : @(YES)}];
     _midi2hidController.forwardButtonsToSynthesiaOnly = [userDefaults boolForKey:kAppDefaultActivateSynthesia];
 
+    // MK3 Screen is experimental and off by default. The property is nil on non-MK3, where
+    // this is a harmless no-op.
+    [userDefaults registerDefaults:@{kAppDefaultMK3Screen : @(NO)}];
+    _midi2hidController.screenController.enabled = [userDefaults boolForKey:kAppDefaultMK3Screen];
+
     if (usbAvailable == YES) {
         if (_hidController.mk == 2) {
             _videoController = [[VideoController alloc] initWithUSBController:_usbController
@@ -251,6 +258,13 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     [menu addItemWithTitle:[SynthesiaController status] action:nil keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Settings" action:@selector(preferences:) keyEquivalent:@""];
+    if (_midi2hidController.screenController != nil) {
+        NSMenuItem* screenItem = [menu addItemWithTitle:@"MK3 Screen (experimental)"
+                                                 action:@selector(toggleMK3Screen:)
+                                          keyEquivalent:@""];
+        screenItem.state = _midi2hidController.screenController.isEnabled ? NSControlStateValueOn
+                                                                          : NSControlStateValueOff;
+    }
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Reset" action:@selector(reset:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Show Log" action:@selector(showLog:) keyEquivalent:@""];
@@ -406,6 +420,14 @@ NSString* kAppDefaultMirrorSynthesia = @"mirror_synthesia_to_controller_screen";
     _videoController.mirrorSynthesiaApplicationWindow = !_videoController.mirrorSynthesiaApplicationWindow;
     [_videoController reset:nil];
     [self preferencesUpdatedMirror];
+}
+
+- (void)toggleMK3Screen:(id)sender
+{
+    ScreenController* screen = _midi2hidController.screenController;
+    screen.enabled = !screen.isEnabled;
+    [[NSUserDefaults standardUserDefaults] setBool:screen.isEnabled forKey:kAppDefaultMK3Screen];
+    [(NSMenuItem*)sender setState:screen.isEnabled ? NSControlStateValueOn : NSControlStateValueOff];
 }
 
 - (void)bootstrapSynthesia:(id)sender withCompletion:(void (^)(void))completion

@@ -114,6 +114,11 @@ static void HIDDeviceRemovedCallback(void* context, IOReturn result, void* sende
     ODRClient* odr;
 }
 
+- (ODRClient*)odrClient
+{
+    return odr;
+}
+
 + (NSColor*)colorWithKeyState:(const unsigned char)keyState
 {
     if (keyState < kKompleteKontrolColorIntensityLevelCount) {

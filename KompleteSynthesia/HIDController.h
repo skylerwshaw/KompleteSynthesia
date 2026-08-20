@@ -118,6 +118,7 @@ enum {
 
 @class LogViewController;
 @class USBController;
+@class ODRClient;
 
 @protocol HIDControllerDelegate <NSObject>
 - (void)receivedEvent:(const int)event value:(int)value;
@@ -133,6 +134,10 @@ enum {
 @property (assign, nonatomic) unsigned char* keys;
 @property (assign, nonatomic) unsigned char* buttons;
 @property (nonatomic, weak) id<HIDControllerDelegate> delegate;
+
+// The shared, focused ODR session used for MK3 lighting; also drives the MK3 Screen. nil
+// unless an MK3 is connected through NI's service (see CONTEXT.md, docs/adr/0001).
+@property (nonatomic, readonly, nullable) ODRClient* odrClient;
 
 + (NSColor*)colorWithKeyState:(const unsigned char)keyState;
 
