@@ -9,6 +9,10 @@ xcuserdata/
 
 build/
 
+## Captured ODR sessions (MK3 Screen template capture, see docs/mk3-screen-capture.md).
+## These are build inputs produced on hardware, not committed.
+captures/
+
 ## compatibility with Xcode 8 and earlier (ignoring not required starting Xcode 9)
 *.xcscmblueprint
 *.xccheckout
