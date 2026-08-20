@@ -7,10 +7,18 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import <string.h>
+
+#import "ODRClient.h"
+
 int main(int argc, const char* argv[])
 {
     @autoreleasepool {
-        // Setup code that might create autoreleased objects goes here.
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--selftest") == 0) {
+                return [ODRClient runEncodingSelfTest] ? 0 : 1;
+            }
+        }
     }
     return NSApplicationMain(argc, argv);
 }

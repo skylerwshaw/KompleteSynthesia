@@ -9,6 +9,8 @@
 #import <sys/un.h>
 #import <unistd.h>
 
+#import <CommonCrypto/CommonDigest.h>
+
 #import "LogViewController.h"
 
 static NSString* const kODRSocketPath = @"/Users/Shared/Native Instruments/com.native-instruments.odr_agent.kks";
@@ -25,6 +27,11 @@ static NSString* const kODRSymbolConnectDevice = @"connect_device";
 static NSString* const kODRSymbolRequestFocus = @"client_request_focus";
 static NSString* const kODRSymbolLightGuide = @"client_lightguide_set_leds";
 static NSString* const kODRSymbolMidiAddressing = @"client_midi_addressing";
+static NSString* const kODRSymbolAddAsset = @"add_asset";
+
+// Sentinel for a name the connected agent's registry did not provide. Screen support
+// (add_asset) is optional: an older agent simply lacks it, and lighting must still work.
+static const uint32_t kODRMethodUnresolved = UINT32_MAX;
 
 // Agent 2.0.7 (R15) / IPC protocol 2.1.0 (the generation this app was first confirmed
 // against) is not known to include a symbol_registry in its hello reply at all (nobody
@@ -80,6 +87,27 @@ static void ODRAppendString(NSMutableData* d, NSString* s)
         [d appendBytes:bytes length:2];
     }
     [d appendData:utf8];
+}
+
+// msgpack `bin`: a raw byte string, used for the 32-byte asset handle and the image bytes.
+// Distinct from `str`; the service's asset store rejects anything that is not a bin.
+static void ODRAppendBinary(NSMutableData* d, const void* bytes, NSUInteger len)
+{
+    if (len <= 0xff) {
+        uint8_t header[2] = {0xc4, (uint8_t)len};
+        [d appendBytes:header length:2];
+    } else if (len <= 0xffff) {
+        uint8_t prefix = 0xc5;
+        [d appendBytes:&prefix length:1];
+        uint16_t v = CFSwapInt16HostToBig((uint16_t)len);
+        [d appendBytes:&v length:2];
+    } else {
+        uint8_t prefix = 0xc6;
+        [d appendBytes:&prefix length:1];
+        uint32_t v = CFSwapInt32HostToBig((uint32_t)len);
+        [d appendBytes:&v length:4];
+    }
+    [d appendBytes:bytes length:len];
 }
 
 static void ODRAppendMap(NSMutableData* d, NSUInteger count)
@@ -191,6 +219,7 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     // after connectToDeviceWithSerial: has returned, so they outlive that one call.
     uint32_t lightGuideMethod;
     uint32_t midiAddressingField;
+    uint32_t addAssetMethod;
 
     dispatch_source_t drain;
 }
@@ -200,12 +229,74 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     return [[NSFileManager defaultManager] fileExistsAtPath:kODRSocketPath];
 }
 
++ (BOOL)runEncodingSelfTest
+{
+    // bin8 framing: one byte -> 0xc4, len, payload.
+    NSMutableData* d = [NSMutableData data];
+    uint8_t one = 0x41;
+    ODRAppendBinary(d, &one, 1);
+    const uint8_t expect8[] = {0xc4, 0x01, 0x41};
+    if (d.length != sizeof(expect8) || memcmp(d.bytes, expect8, sizeof(expect8)) != 0) {
+        NSLog(@"selftest FAIL: bin8 framing");
+        return NO;
+    }
+
+    // bin16 framing at 256 bytes: 0xc5, big-endian uint16 length.
+    d = [NSMutableData data];
+    NSMutableData* mid = [NSMutableData dataWithLength:256];
+    ODRAppendBinary(d, mid.bytes, mid.length);
+    const uint8_t* b = d.bytes;
+    if (d.length != 3 + 256 || b[0] != 0xc5 || b[1] != 0x01 || b[2] != 0x00) {
+        NSLog(@"selftest FAIL: bin16 framing");
+        return NO;
+    }
+
+    // bin32 framing at 65536 bytes: 0xc6, big-endian uint32 length.
+    d = [NSMutableData data];
+    NSMutableData* big = [NSMutableData dataWithLength:0x10000];
+    ODRAppendBinary(d, big.bytes, big.length);
+    b = d.bytes;
+    if (d.length != 5 + 0x10000 || b[0] != 0xc6 || b[1] != 0x00 || b[2] != 0x01 || b[3] != 0x00 ||
+        b[4] != 0x00) {
+        NSLog(@"selftest FAIL: bin32 framing");
+        return NO;
+    }
+
+    // SHA-256("abc") known-answer vector.
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256("abc", 3, digest);
+    const uint8_t expected[] = {0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40,
+                                0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17,
+                                0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
+    if (memcmp(digest, expected, sizeof(expected)) != 0) {
+        NSLog(@"selftest FAIL: sha256 vector");
+        return NO;
+    }
+
+    // add_asset params shape: fixarray-2, then a 32-byte handle bin, then the image bin.
+    NSData* image = [@"fake-image-bytes" dataUsingEncoding:NSUTF8StringEncoding];
+    NSMutableData* params = [NSMutableData data];
+    ODRAppendArray(params, 2);
+    ODRAppendBinary(params, digest, sizeof(digest));
+    ODRAppendBinary(params, image.bytes, image.length);
+    b = params.bytes;
+    if (b[0] != 0x92 || b[1] != 0xc4 || b[2] != 0x20 ||
+        params.length != 1 + 2 + 32 + 2 + image.length) {
+        NSLog(@"selftest FAIL: add_asset params shape");
+        return NO;
+    }
+
+    NSLog(@"selftest OK: ODR bin encoding + 32-byte sha256 asset handle");
+    return YES;
+}
+
 - (instancetype)initWithLogViewController:(LogViewController*)logViewController
 {
     self = [super init];
     if (self) {
         log = logViewController;
         sock = -1;
+        addAssetMethod = kODRMethodUnresolved;
     }
     return self;
 }
@@ -420,6 +511,9 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         requestFocusMethod = kODRLegacyMethodRequestFocus;
         lightGuideMethod = kODRLegacyMethodLightGuide;
         midiAddressingField = kODRLegacyFieldMidiAddressing;
+        // Screen support needs a registry to resolve add_asset from; a legacy agent has
+        // none, so it lights keys but cannot drive the screen.
+        addAssetMethod = kODRMethodUnresolved;
     } else {
         NSUInteger iConnect = [registry indexOfObject:kODRSymbolConnectDevice];
         NSUInteger iFocus = [registry indexOfObject:kODRSymbolRequestFocus];
@@ -433,6 +527,12 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         requestFocusMethod = (uint32_t)iFocus;
         lightGuideMethod = (uint32_t)iLeds;
         midiAddressingField = (uint32_t)iAddr;
+
+        // Screen support is optional and resolved best-effort: a missing add_asset just
+        // means this agent cannot drive the screen, never a failed connection, because
+        // lighting is the core feature and must work regardless.
+        NSUInteger iAsset = [registry indexOfObject:kODRSymbolAddAsset];
+        addAssetMethod = (iAsset == NSNotFound) ? kODRMethodUnresolved : (uint32_t)iAsset;
     }
 
     NSMutableData* attachMethod = [NSMutableData data];
@@ -543,6 +643,43 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     [params appendData:leds];
 
     return [self sendMessage:[self notificationWithMethod:lightGuideMethod params:params]];
+}
+
+#pragma mark - Screen
+
+- (BOOL)screenSupported
+{
+    return self.isConnected && addAssetMethod != kODRMethodUnresolved;
+}
+
+- (NSData*)uploadImageAsset:(NSData*)imageBytes
+{
+    if (self.screenSupported == NO || imageBytes.length == 0) {
+        return nil;
+    }
+
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(imageBytes.bytes, (CC_LONG)imageBytes.length, digest);
+
+    // The handle must be exactly 32 bytes. A wrong-length handle deserialises into the
+    // service's strong sha256 type, throws an uncaught C++ exception, and takes the whole
+    // NIHardwareConnectionService (and thus the light guide) down with it. CC_SHA256 always
+    // yields 32, but the invariant is load-bearing, so it is asserted here rather than
+    // assumed. See ODR_PROTOCOL.md / MK3_VIDEO_RESEARCH.md and docs/adr/0001.
+    if (CC_SHA256_DIGEST_LENGTH != 32) {
+        return nil;
+    }
+
+    // `add_asset` is a notification (it has no reply): [ <32-byte handle bin>, <image bin> ].
+    NSMutableData* params = [NSMutableData data];
+    ODRAppendArray(params, 2);
+    ODRAppendBinary(params, digest, CC_SHA256_DIGEST_LENGTH);
+    ODRAppendBinary(params, imageBytes.bytes, imageBytes.length);
+
+    if ([self sendMessage:[self notificationWithMethod:addAssetMethod params:params]] == NO) {
+        return nil;
+    }
+    return [NSData dataWithBytes:digest length:CC_SHA256_DIGEST_LENGTH];
 }
 
 @end
