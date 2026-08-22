@@ -239,6 +239,7 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     uint32_t setPageMethod;
     uint32_t parameterPageIndex;
     BOOL didShowParameterPage;
+    uint32_t focusMethod;
 
     dispatch_source_t drain;
 }
@@ -598,6 +599,7 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
     }
 
     serial = deviceSerial;
+    focusMethod = requestFocusMethod;
 
     // Lighting is accepted and silently discarded unless the client holds focus.
     NSMutableData* focusParams = [NSMutableData data];
@@ -673,6 +675,17 @@ static NSArray<NSString*>* ODRFindSymbolRegistry(NSData* reply)
         ODRAppendUInt(leds, (uint32_t)note);
         ODRAppendUInt(leds, (key >= 0 && key < (NSInteger)count) ? colors[key] : 0);
     }
+
+    // Re-assert focus before every lighting write. NI's focus is ephemeral, and other ODR
+    // activity after connect (the control-surface session, NI's own agents) can take it,
+    // after which lighting is accepted but silently not rendered ("write=1 but dark"). The
+    // reference odr_lightguide.py never sees this because it lights immediately inside its
+    // one focus window. Cheap notification; keeps us the rendering client.
+    NSMutableData* focusParams = [NSMutableData data];
+    ODRAppendArray(focusParams, 2);
+    ODRAppendString(focusParams, uuid);
+    ODRAppendString(focusParams, serial);
+    [self sendMessage:[self notificationWithMethod:focusMethod params:focusParams]];
 
     NSMutableData* params = [NSMutableData data];
     ODRAppendArray(params, 3);
